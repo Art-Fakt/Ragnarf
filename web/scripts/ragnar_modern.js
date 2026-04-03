@@ -10844,7 +10844,7 @@ function displayFiles(files, path, highlightFile = null) {
                 <div class="flex items-center cursor-pointer flex-1" onclick="${file.is_directory ? `loadFiles('${escapeAttr(file.path)}')` : `previewFile('${escapeAttr(file.path)}')`}">
                     ${icon}
                     <div class="flex-1">
-                        <div class="font-medium">${file.name}</div>
+                        <div class="font-medium">${escapeHtml(file.name)}</div>
                         ${!file.is_directory && size ? `<div class="text-sm text-gray-400">${size} • ${date}</div>` : ''}
                     </div>
                 </div>
