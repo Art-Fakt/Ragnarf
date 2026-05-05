@@ -137,10 +137,14 @@ class WardrivingSession:
     def upsert_network(self, bssid, ssid, security, channel, frequency,
                        rssi, lat, lon, alt, speed, hdop, interface=''):
         """Insert or update a discovered network (thread-safe)."""
-        # Sanitize SSID: strip null bytes and non-printable control characters
+        # Sanitize SSID: strip null bytes, hex escape sequences, and non-printable chars
         if ssid:
             ssid = ssid.replace('\x00', '')
-            if ssid and all(ord(c) < 32 for c in ssid):
+            # iw outputs literal \x00 sequences (backslash + x + hex) for non-printable SSIDs
+            ssid = re.sub(r'\\x[0-9a-fA-F]{2}', '', ssid)
+            ssid = ssid.strip()
+            # If nothing printable remains, treat as hidden
+            if not ssid or all(ord(c) < 32 for c in ssid):
                 ssid = ''
         now = datetime.now(timezone.utc).isoformat()
         band = '5GHz' if (frequency and int(frequency) > 4900) else '2.4GHz'
@@ -647,13 +651,23 @@ class WardrivingEngine:
         networks = []
         current = None
 
+        def _sanitize_ssid(ssid):
+            """Clean up SSID: remove hex escapes, null bytes, control chars."""
+            if not ssid:
+                return ''
+            ssid = ssid.replace('\x00', '')
+            # iw outputs literal \xNN for non-printable bytes
+            ssid = re.sub(r'\\x[0-9a-fA-F]{2}', '', ssid)
+            ssid = ssid.strip()
+            if not ssid or all(ord(c) < 32 for c in ssid):
+                return ''
+            return ssid
+
         for line in output.split('\n'):
             line = line.strip()
             if line.startswith('BSS '):
                 if current and current.get('bssid'):
-                    # Sanitize SSID: remove null bytes and control chars
-                    ssid = current.get('ssid', '')
-                    if ssid and (('\x00' in ssid) or all(c < ' ' for c in ssid if c != ' ')):
+                    current['ssid'] = _sanitize_ssid(current.get('ssid', ''))
                         current['ssid'] = ''
                     networks.append(current)
                 # BSS aa:bb:cc:dd:ee:ff(on wlan0) -- associated
@@ -726,9 +740,7 @@ class WardrivingEngine:
                         current['security'] = 'WEP'
 
         if current and current.get('bssid'):
-            ssid = current.get('ssid', '')
-            if ssid and (('\x00' in ssid) or all(c < ' ' for c in ssid if c != ' ')):
-                current['ssid'] = ''
+            current['ssid'] = _sanitize_ssid(current.get('ssid', ''))
             networks.append(current)
 
         return networks
