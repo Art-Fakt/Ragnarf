@@ -14971,6 +14971,11 @@ async function toggleWardriving() {
     }
     // Always refresh state from server regardless of success/failure
     await loadWardrivingData();
+    // After starting, do an extra refresh after a short delay so first scan results appear
+    if (_wardrivingRunning) {
+        setTimeout(() => loadWardrivingData(), 2000);
+        setTimeout(() => loadWardrivingData(), 5000);
+    }
     _wardrivingBusy = false;
     if (btn) { btn.disabled = false; btn.classList.remove('opacity-50', 'pointer-events-none'); }
 }
