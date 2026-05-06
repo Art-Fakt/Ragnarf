@@ -1255,8 +1255,7 @@ class Display:
 
         # GPS status line
         if gps.get('has_fix'):
-            pos = gps.get('position', {})
-            gps_str = f"{pos.get('lat', 0):.4f},{pos.get('lon', 0):.4f}"
+            gps_str = f"{gps.get('latitude', 0):.4f},{gps.get('longitude', 0):.4f}"
         elif gps.get('connected'):
             gps_str = "Searching..."
         else:
@@ -1644,8 +1643,7 @@ class Display:
 
             # GPS status
             if gps.get('has_fix'):
-                pos = gps.get('position', {})
-                gps_str = f"{pos.get('lat', 0):.4f},{pos.get('lon', 0):.4f}"
+                gps_str = f"{gps.get('latitude', 0):.4f},{gps.get('longitude', 0):.4f}"
                 gps_col = C_GREEN
             elif gps.get('connected'):
                 gps_str = "GPS searching..."
@@ -2115,8 +2113,7 @@ class Display:
             scans = wd.get('scans_completed', 0) if wd else 0
 
             if gps.get('has_fix'):
-                pos = gps.get('position', {})
-                gps_str = f"{pos.get('lat', 0):.4f},{pos.get('lon', 0):.4f}"
+                gps_str = f"{gps.get('latitude', 0):.4f},{gps.get('longitude', 0):.4f}"
             elif gps.get('connected'):
                 gps_str = "GPS searching..."
             else:
