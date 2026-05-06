@@ -14804,7 +14804,8 @@ function renderWardrivingSessions(sessions) {
 // ============================================================================
 let _wdMap = null;
 let _wdMapVisible = false;
-let _wdMapMarkers = [];
+let _wdMapClusterGroup = null;
+let _wdMapAllNetworks = [];
 
 function toggleWardrivingMap() {
     const container = document.getElementById('wd-map-container');
@@ -14834,58 +14835,114 @@ function toggleWardrivingMap() {
     }
 }
 
+function _wdSecurityType(sec) {
+    if (!sec || sec === 'Open') return 'open';
+    if (sec.includes('WEP')) return 'wep';
+    return 'wpa';
+}
+
+function _wdMarkerColor(sec) {
+    const t = _wdSecurityType(sec);
+    if (t === 'open') return '#10b981';
+    if (t === 'wep') return '#f59e0b';
+    return '#3b82f6';
+}
+
 async function loadWardrivingMapData() {
     if (!_wdMap) return;
     try {
         const res = await fetch('/api/wardriving/networks?limit=2000');
         const data = await res.json();
-        const networks = (data.networks || []).filter(n => n.best_lat && n.best_lon && n.best_lat !== 0 && n.best_lon !== 0);
-
-        // Clear old markers
-        _wdMapMarkers.forEach(m => _wdMap.removeLayer(m));
-        _wdMapMarkers = [];
-
-        if (networks.length === 0) {
-            document.getElementById('wd-map-info').textContent = 'No GPS-tagged networks yet.';
-            return;
-        }
-
-        const bounds = [];
-        networks.forEach(n => {
-            const lat = n.best_lat;
-            const lon = n.best_lon;
-            bounds.push([lat, lon]);
-
-            const color = !n.security || n.security === 'Open' ? '#10b981' :
-                          n.security.includes('WEP') ? '#f59e0b' : '#3b82f6';
-            const marker = L.circleMarker([lat, lon], {
-                radius: 7,
-                fillColor: color,
-                color: '#1e293b',
-                weight: 1,
-                fillOpacity: 0.85
-            }).addTo(_wdMap);
-
-            const ssid = n.ssid || '&lt;hidden&gt;';
-            marker.bindPopup(`
-                <div style="font-family: monospace; min-width: 180px;">
-                    <b style="font-size: 13px;">${ssid}</b><br>
-                    <span style="color: #888;">BSSID:</span> ${n.bssid}<br>
-                    <span style="color: #888;">Security:</span> <span style="color:${color}">${n.security || 'Open'}</span><br>
-                    <span style="color: #888;">Channel:</span> ${n.channel || '-'} (${n.band || '-'})<br>
-                    <span style="color: #888;">Signal:</span> ${n.best_rssi} dBm<br>
-                    <span style="color: #888;">Seen:</span> ${n.scan_count || 1}x<br>
-                    <span style="color: #888;">Position:</span> ${lat.toFixed(5)}, ${lon.toFixed(5)}
-                </div>
-            `);
-            _wdMapMarkers.push(marker);
-        });
-
-        _wdMap.fitBounds(bounds, { padding: [30, 30] });
-        document.getElementById('wd-map-info').textContent = `${networks.length} networks with GPS position`;
+        _wdMapAllNetworks = (data.networks || []).filter(n => n.best_lat && n.best_lon && n.best_lat !== 0 && n.best_lon !== 0);
+        applyWardrivingMapFilters();
     } catch (e) {
         console.error('[Wardriving] Map error:', e);
     }
+}
+
+function applyWardrivingMapFilters() {
+    if (!_wdMap) return;
+
+    const secFilter = document.getElementById('wd-map-filter-security')?.value || 'all';
+    const bandFilter = document.getElementById('wd-map-filter-band')?.value || 'all';
+    const signalMin = parseInt(document.getElementById('wd-map-filter-signal')?.value || '-100', 10);
+
+    let filtered = _wdMapAllNetworks;
+    if (secFilter !== 'all') {
+        filtered = filtered.filter(n => _wdSecurityType(n.security) === secFilter);
+    }
+    if (bandFilter !== 'all') {
+        filtered = filtered.filter(n => n.band === bandFilter);
+    }
+    if (signalMin > -100) {
+        filtered = filtered.filter(n => n.best_rssi >= signalMin);
+    }
+
+    // Remove old cluster group
+    if (_wdMapClusterGroup) {
+        _wdMap.removeLayer(_wdMapClusterGroup);
+    }
+    _wdMapClusterGroup = L.markerClusterGroup({
+        maxClusterRadius: 40,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: false,
+        iconCreateFunction: function(cluster) {
+            const count = cluster.getChildCount();
+            let size = 'small';
+            if (count >= 50) size = 'large';
+            else if (count >= 10) size = 'medium';
+            return L.divIcon({
+                html: '<div style="background:rgba(99,102,241,0.85);color:#fff;border-radius:50%;width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;border:2px solid rgba(255,255,255,0.4);">' + count + '</div>',
+                className: 'wd-cluster-icon',
+                iconSize: size === 'large' ? [44, 44] : size === 'medium' ? [36, 36] : [28, 28]
+            });
+        }
+    });
+
+    if (filtered.length === 0) {
+        _wdMap.addLayer(_wdMapClusterGroup);
+        document.getElementById('wd-map-info').textContent = _wdMapAllNetworks.length > 0
+            ? `0 / ${_wdMapAllNetworks.length} networks match filters`
+            : 'No GPS-tagged networks yet.';
+        return;
+    }
+
+    const bounds = [];
+    filtered.forEach(n => {
+        const lat = n.best_lat;
+        const lon = n.best_lon;
+        bounds.push([lat, lon]);
+
+        const color = _wdMarkerColor(n.security);
+        const marker = L.circleMarker([lat, lon], {
+            radius: 7,
+            fillColor: color,
+            color: '#1e293b',
+            weight: 1,
+            fillOpacity: 0.85
+        });
+
+        const ssid = n.ssid || '&lt;hidden&gt;';
+        marker.bindPopup(`
+            <div style="font-family: monospace; min-width: 180px;">
+                <b style="font-size: 13px;">${ssid}</b><br>
+                <span style="color: #888;">BSSID:</span> ${n.bssid}<br>
+                <span style="color: #888;">Security:</span> <span style="color:${color}">${n.security || 'Open'}</span><br>
+                <span style="color: #888;">Channel:</span> ${n.channel || '-'} (${n.band || '-'})<br>
+                <span style="color: #888;">Signal:</span> ${n.best_rssi} dBm<br>
+                <span style="color: #888;">Seen:</span> ${n.scan_count || 1}x<br>
+                <span style="color: #888;">Position:</span> ${lat.toFixed(5)}, ${lon.toFixed(5)}
+            </div>
+        `);
+        _wdMapClusterGroup.addLayer(marker);
+    });
+
+    _wdMap.addLayer(_wdMapClusterGroup);
+    _wdMap.fitBounds(bounds, { padding: [30, 30] });
+    const total = _wdMapAllNetworks.length;
+    document.getElementById('wd-map-info').textContent = filtered.length === total
+        ? `${total} networks with GPS position`
+        : `${filtered.length} / ${total} networks match filters`;
 }
 
 let _wardrivingRunning = false;

@@ -227,6 +227,9 @@
     <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin=""/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
 </head>
 
 <body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white min-h-screen">
@@ -3739,6 +3742,25 @@
 
                 <!-- Map Container (hidden by default) -->
                 <div id="wd-map-container" class="hidden mb-6">
+                    <!-- Map Filters -->
+                    <div class="flex flex-wrap gap-3 items-center mb-3 bg-slate-800/50 rounded-lg px-4 py-2">
+                        <label class="text-xs text-gray-400">Security:</label>
+                        <select id="wd-map-filter-security" onchange="applyWardrivingMapFilters()" class="bg-slate-700 text-white text-xs rounded px-2 py-1 border border-slate-600">
+                            <option value="all">All</option>
+                            <option value="open">Open</option>
+                            <option value="wep">WEP</option>
+                            <option value="wpa">WPA/WPA2</option>
+                        </select>
+                        <label class="text-xs text-gray-400">Band:</label>
+                        <select id="wd-map-filter-band" onchange="applyWardrivingMapFilters()" class="bg-slate-700 text-white text-xs rounded px-2 py-1 border border-slate-600">
+                            <option value="all">All</option>
+                            <option value="2.4GHz">2.4 GHz</option>
+                            <option value="5GHz">5 GHz</option>
+                        </select>
+                        <label class="text-xs text-gray-400">Min Signal:</label>
+                        <input type="range" id="wd-map-filter-signal" min="-100" max="-30" value="-100" oninput="document.getElementById('wd-map-signal-val').textContent=this.value+' dBm'; applyWardrivingMapFilters()" class="w-24">
+                        <span id="wd-map-signal-val" class="text-xs text-gray-300">-100 dBm</span>
+                    </div>
                     <div id="wd-map" style="height: 450px; border-radius: 0.75rem; z-index: 1;"></div>
                     <div class="text-xs text-gray-500 mt-1 text-right" id="wd-map-info"></div>
                 </div>
