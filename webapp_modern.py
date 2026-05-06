@@ -6272,7 +6272,7 @@ def wardriving_serial():
             if not re.match(r'^(/dev/tty[A-Za-z0-9]+|COM\d+)$', port):
                 return jsonify({'error': 'Invalid serial port format'}), 400
             # Save to config
-            get_shared_data().config['wardriving_serial_port'] = port
+            shared_data.config['wardriving_serial_port'] = port
             result = engine.start_serial(port)
             return jsonify(result)
     except Exception as e:
