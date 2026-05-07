@@ -14866,6 +14866,26 @@ async function importWigleCsv() {
     }
 }
 
+async function detectSerialPort() {
+    const portInput = document.getElementById('wd-serial-port');
+    const statusEl = document.getElementById('wd-serial-status');
+    try {
+        if (statusEl) { statusEl.textContent = 'Searching...'; statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-amber-900 text-amber-400'; }
+        const res = await fetch('/api/wardriving/serial/detect');
+        const data = await res.json();
+        if (data.found && data.port) {
+            if (portInput) portInput.value = data.port;
+            if (statusEl) { statusEl.textContent = 'Found: ' + data.port; statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-400'; }
+        } else {
+            if (statusEl) { statusEl.textContent = 'Not found'; statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400'; }
+            setTimeout(() => { if (statusEl) { statusEl.textContent = 'Disconnected'; statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400'; } }, 3000);
+        }
+    } catch (e) {
+        console.error('[Wardriving] detect error:', e);
+        if (statusEl) { statusEl.textContent = 'Error'; statusEl.className = 'text-xs px-2 py-0.5 rounded-full bg-red-900 text-red-400'; }
+    }
+}
+
 async function toggleSerialListener() {
     const portInput = document.getElementById('wd-serial-port');
     const statusEl = document.getElementById('wd-serial-status');

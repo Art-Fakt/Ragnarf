@@ -6245,6 +6245,19 @@ def wardriving_import_csv():
         logger.error(f"Wardriving import error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/wardriving/serial/detect', methods=['GET'])
+def wardriving_serial_detect():
+    """Auto-detect ESP32 on serial ports."""
+    try:
+        engine = _get_wardriving_engine()
+        port = engine._detect_esp32_serial()
+        if port:
+            return jsonify({'found': True, 'port': port})
+        return jsonify({'found': False, 'port': ''})
+    except Exception as e:
+        logger.error(f"Wardriving serial detect error: {e}")
+        return jsonify({'found': False, 'error': str(e)})
+
 @app.route('/api/wardriving/serial', methods=['GET', 'POST'])
 def wardriving_serial():
     """Get or set serial ESP32 listener configuration."""

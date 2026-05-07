@@ -4020,8 +4020,9 @@
                             <div class="text-sm text-gray-400 mb-3">
                                 Listen for real-time wardriving data from a USB-connected ESP32 device.
                             </div>
-                            <div class="flex gap-2 items-center">
+                            <div class="flex gap-2 items-center flex-wrap">
                                 <input type="text" id="wd-serial-port" placeholder="/dev/ttyUSB0 or COM3" class="bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600 w-44">
+                                <button onclick="detectSerialPort()" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded text-xs transition-colors" title="Auto-detect ESP32">🔍 Search</button>
                                 <button id="wd-serial-btn" onclick="toggleSerialListener()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded text-xs transition-colors">Connect</button>
                             </div>
                             <div id="wd-serial-networks" class="text-xs text-gray-500 mt-2">Networks from ESP32: <span id="wd-serial-count">0</span></div>
