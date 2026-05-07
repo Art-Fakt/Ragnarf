@@ -1643,6 +1643,8 @@ class WardrivingEngine:
                 buf['bssid'] = line.split(':', 1)[1].strip()
             elif line.startswith('Channel:'):
                 buf['channel'] = line.split(':', 1)[1].strip()
+            elif line.startswith('Security:'):
+                buf['security'] = line.split(':', 1)[1].strip()
             elif line.startswith('RSSI:'):
                 rssi_val = re.search(r'-?\d+', line)
                 buf['rssi'] = int(rssi_val.group()) if rssi_val else -80
