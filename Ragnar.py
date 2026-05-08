@@ -160,7 +160,21 @@ class Ragnar:
             from wardriving import WardrivingEngine
             self._wd_engine = WardrivingEngine(self.shared_data)
             device_name = self.shared_data.config.get('wardriving_device_name', 'Ragnar')
-            result = self._wd_engine.start(device_name=device_name)
+            gps_port = self.shared_data.config.get('wardriving_gps_port', '') or None
+
+            # At boot, USB devices may not be enumerated yet — retry GPS detection
+            max_retries = 5
+            result = None
+            for attempt in range(1, max_retries + 1):
+                result = self._wd_engine.start(device_name=device_name, gps_port=gps_port)
+                if result.get('gps_available'):
+                    break
+                if attempt < max_retries:
+                    logger.info(f"GPS not ready at boot (attempt {attempt}/{max_retries}), waiting 3s...")
+                    self._wd_engine.stop()
+                    time.sleep(3)
+                    self._wd_engine = WardrivingEngine(self.shared_data)
+
             logger.info(f"Wardriving auto-started on boot: {result}")
             # Store reference so webapp can find it
             import webapp_modern
