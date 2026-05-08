@@ -3704,6 +3704,9 @@ async function loadConfigData() {
 
         // Load security configuration
         await loadSecurityConfig();
+
+        // Load wardriving on-boot toggle state (card is in config page)
+        loadWardrivingOnBootState();
     } catch (error) {
         console.error('Error loading config:', error);
     }
