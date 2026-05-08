@@ -962,6 +962,7 @@ class WardrivingEngine:
         self._esp_ble_count = 0
         self._esp_stations = []
         self._companion_name = ''  # 'Huginn' or 'Piglet'
+        self._mesh_node_count = 0  # Piglet Core mesh node count
 
     def start(self, interfaces=None, gps_port=None, device_name=None):
         """Start a wardriving session."""
@@ -1126,6 +1127,7 @@ class WardrivingEngine:
             'serial_port': self._serial_port or '',
             'serial_networks': self.serial_networks,
             'companion_name': self._companion_name,
+            'mesh_node_count': self._mesh_node_count,
             'esp_mode': getattr(self, '_current_esp_mode', ''),
             'esp_ble_count': getattr(self, '_esp_ble_count', 0),
             'esp_alerts': getattr(self, '_esp_alerts', [])[-5:],  # Last 5 alerts
@@ -1700,19 +1702,23 @@ class WardrivingEngine:
                 self.serial_connected = True
                 logger.info(f"Serial connected: {self._serial_port}")
 
-                # Identify companion: send empty line and check for huginn> prompt
+                # Identify companion: send 'status' command
+                # HuginnESP responds with JSON {"mode":...}, Piglet ignores it
                 try:
                     ser.reset_input_buffer()
-                    ser.write(b"\r\n")
-                    time.sleep(0.5)
-                    probe = ser.read(ser.in_waiting or 256).decode('utf-8', errors='replace')
-                    if 'huginn>' in probe.lower():
+                    ser.write(b"status\r\n")
+                    time.sleep(1)
+                    probe = ser.read(ser.in_waiting or 512).decode('utf-8', errors='replace')
+                    if '{"mode"' in probe or 'HuginnESP' in probe or 'huginn' in probe.lower():
                         self._companion_name = 'Huginn'
+                    elif 'Piglet' in probe:
+                        self._companion_name = 'Piglet'
                     else:
+                        # No recognizable response to status — likely Piglet (passive CSV output)
                         self._companion_name = 'Piglet'
                     logger.info(f"Companion identified: {self._companion_name}")
                 except Exception:
-                    self._companion_name = 'Piglet'  # Default fallback
+                    self._companion_name = 'Companion'  # Unknown fallback
 
                 cycle_index = 0
 
@@ -1786,6 +1792,31 @@ class WardrivingEngine:
         # Skip HuginnESP prompt and status lines
         if line.startswith('huginn>') or line.startswith('Wardrive:') or line.startswith('Registered') or line.startswith('Unsupported'):
             return
+
+        # === Piglet Mesh node tracking ===
+        # "[CORE] New ... node N:" or "[CORE] Reassigned: N nodes"
+        if line.startswith('[CORE]'):
+            m = re.search(r'node (\d+):', line)
+            if m:
+                self._mesh_node_count = max(self._mesh_node_count, int(m.group(1)))
+            m = re.search(r'Reassigned:\s*(\d+)\s*nodes', line)
+            if m:
+                self._mesh_node_count = int(m.group(1))
+            m = re.search(r'Node\s+(\d+)\s+timed out', line)
+            if m:
+                self._mesh_node_count = max(0, self._mesh_node_count - 1)
+            # Auto-detect as Piglet if we see [CORE] messages
+            if not self._companion_name or self._companion_name == 'Companion':
+                self._companion_name = 'Piglet'
+            return
+        if line.startswith('[MESH]') or line.startswith('[BOOT]'):
+            # Auto-detect companion from boot/mesh messages
+            if 'HuginnESP' in line:
+                self._companion_name = 'Huginn'
+            elif 'Piglet' in line:
+                self._companion_name = 'Piglet'
+            return
+
         # Skip scan status messages, help text, and BLE init lines
         skip_prefixes = ('WiFi scan', 'Started', 'Stopped', 'Usage:', 'Scanning started',
                          'BLE initialized', 'BLE scan stopped', 'Skimmer detection',

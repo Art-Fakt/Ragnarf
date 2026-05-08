@@ -14820,6 +14820,16 @@ function updateWardrivingUI(status) {
                 modeEl.textContent = modeLabels[status.esp_mode] || status.esp_mode || '';
             }
             updateElement('wd-esp-ble-count', String(status.esp_ble_count || 0));
+            // Show mesh node count (Piglet Core)
+            const meshWrapper = document.getElementById('wd-esp-mesh-wrapper');
+            if (meshWrapper) {
+                if (status.mesh_node_count > 0) {
+                    meshWrapper.classList.remove('hidden');
+                    updateElement('wd-esp-mesh-nodes', String(status.mesh_node_count));
+                } else {
+                    meshWrapper.classList.add('hidden');
+                }
+            }
             // Show alerts
             const alertEl = document.getElementById('wd-esp-alerts');
             if (alertEl && status.esp_alerts && status.esp_alerts.length > 0) {
