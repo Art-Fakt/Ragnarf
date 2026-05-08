@@ -1471,8 +1471,10 @@ class WardrivingEngine:
                         device_type=dev.get('type', ''), lat=lat, lon=lon, alt=alt
                     )
                 self.bt_count = len(devices)
+                if devices:
+                    logger.info(f"BT scan found {len(devices)} devices")
             except Exception as e:
-                logger.debug(f"BT scan error: {e}")
+                logger.warning(f"BT scan error: {e}")
             time.sleep(15)
         logger.info("Bluetooth scan loop stopped")
 
@@ -1481,13 +1483,24 @@ class WardrivingEngine:
         devices = []
         seen_macs = set()
 
+        # Ensure Bluetooth is not soft-blocked
+        try:
+            subprocess.run(['sudo', 'rfkill', 'unblock', 'bluetooth'],
+                           capture_output=True, timeout=3)
+        except Exception:
+            pass
+
         # Method 1: bluetoothctl (Classic + BLE)
         try:
             # Power on once per session (skip repeated calls)
             if not WardrivingEngine._bt_powered_on:
-                subprocess.run(['sudo', 'bluetoothctl', 'power', 'on'],
-                               capture_output=True, timeout=5)
-                WardrivingEngine._bt_powered_on = True
+                power_result = subprocess.run(['sudo', 'bluetoothctl', 'power', 'on'],
+                               capture_output=True, text=True, timeout=5)
+                if power_result.returncode == 0:
+                    WardrivingEngine._bt_powered_on = True
+                    logger.info(f"Bluetooth powered on: {power_result.stdout.strip()}")
+                else:
+                    logger.warning(f"Bluetooth power on failed: {power_result.stderr.strip()}")
             proc = subprocess.run(
                 ['sudo', 'bluetoothctl', '--timeout', '5', 'scan', 'on'],
                 capture_output=True, text=True, timeout=8
@@ -1508,7 +1521,7 @@ class WardrivingEngine:
                             seen_macs.add(mac)
                             devices.append({'mac': mac, 'name': name, 'rssi': -80, 'type': 'Classic/BLE'})
         except Exception as e:
-            logger.debug(f"bluetoothctl scan failed: {e}")
+            logger.warning(f"bluetoothctl scan failed: {e}")
 
         # Method 2: hcitool lescan for BLE (if available)
         try:
@@ -1526,7 +1539,7 @@ class WardrivingEngine:
                             seen_macs.add(mac)
                             devices.append({'mac': mac, 'name': name, 'rssi': -85, 'type': 'BLE'})
         except Exception as e:
-            logger.debug(f"hcitool lescan failed: {e}")
+            logger.warning(f"hcitool lescan failed: {e}")
 
         return devices
 
