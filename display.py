@@ -1253,6 +1253,14 @@ class Display:
         st = wd.get('stats', {})
         gps = wd.get('gps', {})
 
+        # WiFi connection status line (same as regular Ragnar EPD)
+        wifi_connected = self.is_wifi_connected()
+        if wifi_connected:
+            ip_octet = self.get_wifi_ip_last_octet() or ""
+            wifi_str = f"* {ip_octet}" if ip_octet else "*"
+        else:
+            wifi_str = "No WiFi"
+
         # GPS status line
         if gps.get('has_fix'):
             gps_str = f"{gps.get('latitude', 0):.4f},{gps.get('longitude', 0):.4f}"
@@ -1262,13 +1270,15 @@ class Display:
             gps_str = "No GPS"
 
         stats = [
+            ("WiFi", wifi_str),
             ("Networks", str(st.get('total_networks', 0))),
-            ("Open", str(st.get('open_networks', 0))),
-            ("WEP", str(st.get('wep_networks', 0))),
-            ("WPA", str(st.get('wpa_networks', 0))),
-            ("2.4G/5G/6G", f"{st.get('band_2_4ghz', 0)}/{st.get('band_5ghz', 0)}/{st.get('band_6ghz', 0)}"),
-            ("BT/Cell/Cam", f"{st.get('bluetooth_devices', 0)}/{st.get('cell_towers', 0)}/{st.get('cameras', 0)}"),
-            ("Scans", str(wd.get('scans_completed', 0))),
+            ("Open/WEP", f"{st.get('open_networks', 0)}/{st.get('wep_networks', 0)}"),
+            ("2.4 GHz", str(st.get('band_2_4ghz', 0))),
+            ("5 GHz", str(st.get('band_5ghz', 0))),
+            ("6 GHz", str(st.get('band_6ghz', 0))),
+            ("Bluetooth", str(st.get('bluetooth_devices', 0))),
+            ("Cell", str(st.get('cell_towers', 0))),
+            ("Cameras", str(st.get('cameras', 0))),
             ("GPS", gps_str),
         ]
         if gps.get('has_fix'):
