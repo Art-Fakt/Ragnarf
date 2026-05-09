@@ -4074,6 +4074,43 @@
                             <div id="wd-serial-networks" class="text-xs text-gray-500 mt-2">Networks from ESP32: <span id="wd-serial-count">0</span></div>
                         </div>
 
+                        <!-- Huginn Runtime Config Card -->
+                        <div id="wd-huginn-config-card" class="glass rounded-lg p-4 md:col-span-2">
+                            <div class="flex items-center justify-between mb-3">
+                                <h4 class="font-medium">Huginn Runtime Config</h4>
+                                <span id="wd-huginn-config-state" class="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">Saved on connect</span>
+                            </div>
+                            <div class="text-sm text-gray-400 mb-3">
+                                Tune the firmware's RAM-only knobs. Pushed automatically every time Huginn reconnects.
+                                Connect a Huginn over serial above to apply changes live.
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <label class="text-xs text-gray-400">
+                                    WiFi scan duration (ms)
+                                    <input type="number" id="wd-huginn-scan-ms" min="500" max="600000" step="500" placeholder="15000"
+                                           class="mt-1 block w-full bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600">
+                                    <span class="text-gray-500">500–600000. Firmware default 15000.</span>
+                                </label>
+                                <label class="text-xs text-gray-400">
+                                    BLE spam threshold (ads/window)
+                                    <input type="number" id="wd-huginn-ble-spam" min="1" max="10000" step="1" placeholder="20"
+                                           class="mt-1 block w-full bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600">
+                                    <span class="text-gray-500">1–10000. Firmware default 20.</span>
+                                </label>
+                                <label class="text-xs text-gray-400 md:col-span-2">
+                                    Skimmer name list (comma-separated)
+                                    <textarea id="wd-huginn-skimmer-names" rows="2" placeholder="HC-03,HC-05,HC-06,..."
+                                              class="mt-1 block w-full bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600 font-mono"></textarea>
+                                    <span class="text-gray-500">Leave empty to keep firmware defaults.</span>
+                                </label>
+                            </div>
+                            <div class="flex items-center gap-2 mt-3">
+                                <button onclick="saveHuginnConfig()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded text-xs transition-colors">Save & Push</button>
+                                <button onclick="loadHuginnConfig()" class="bg-slate-700 hover:bg-slate-600 text-gray-300 px-3 py-1.5 rounded text-xs border border-slate-600 transition-colors">Reload</button>
+                                <span id="wd-huginn-config-msg" class="text-xs text-gray-500"></span>
+                            </div>
+                        </div>
+
                     </div>
                     <!-- Dynamic wardriving config settings get injected here by displayConfigForm() -->
                     <div id="wardriving-config-slot"></div>

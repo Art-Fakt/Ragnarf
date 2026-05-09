@@ -9,6 +9,7 @@ import csv
 import json
 import time
 import uuid
+import queue
 import sqlite3
 import threading
 import subprocess
@@ -963,6 +964,9 @@ class WardrivingEngine:
         self._esp_stations = []
         self._companion_name = ''  # 'Huginn' or 'Piglet'
         self._mesh_node_count = 0  # Piglet Core mesh node count
+        # Queue of `set ...\r\n` byte-strings for the listener thread to write
+        # to Huginn. Webapp thread enqueues; listener owns the serial handle.
+        self._huginn_config_queue = queue.Queue()
 
     def start(self, interfaces=None, gps_port=None, device_name=None):
         """Start a wardriving session."""
@@ -1066,6 +1070,149 @@ class WardrivingEngine:
         self._serial_port = None
         self.serial_connected = False
         return {'success': True}
+
+    # ------------------------------------------------------------------
+    # Huginn runtime config push (matches HuginnESP src/runtime_config.cpp).
+    # Knobs:
+    #   wifi_scan_duration_ms : 500..600000  (firmware default 15000)
+    #   ble_spam_threshold    : 1..10000     (firmware default 20)
+    #   skimmer_names         : CSV string   (firmware has built-in defaults)
+    # Firmware state is RAM-only and reapplies on every reboot, so we re-push
+    # at every reconnect from shared_data.config.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_huginn_values(values):
+        out = {}
+        if 'wifi_scan_duration_ms' in values and values['wifi_scan_duration_ms'] is not None:
+            try:
+                v = int(values['wifi_scan_duration_ms'])
+            except (TypeError, ValueError):
+                return None, 'wifi_scan_duration_ms must be an integer'
+            if v < 500 or v > 600000:
+                return None, 'wifi_scan_duration_ms out of range (500..600000)'
+            out['wifi_scan_duration_ms'] = v
+        if 'ble_spam_threshold' in values and values['ble_spam_threshold'] is not None:
+            try:
+                v = int(values['ble_spam_threshold'])
+            except (TypeError, ValueError):
+                return None, 'ble_spam_threshold must be an integer'
+            if v < 1 or v > 10000:
+                return None, 'ble_spam_threshold out of range (1..10000)'
+            out['ble_spam_threshold'] = v
+        if 'skimmer_names' in values and values['skimmer_names'] is not None:
+            raw = values['skimmer_names']
+            if isinstance(raw, list):
+                names = [str(n).strip() for n in raw if str(n).strip()]
+            else:
+                names = [s.strip() for s in str(raw).split(',') if s.strip()]
+            for n in names:
+                if ',' in n or '\r' in n or '\n' in n:
+                    return None, f'skimmer_names: invalid entry {n!r}'
+            out['skimmer_names'] = ','.join(names)
+        return out, None
+
+    def get_huginn_config(self):
+        """Return current Huginn knobs from shared_data.config (with firmware defaults)."""
+        cfg = self.shared_data.config
+        return {
+            'wifi_scan_duration_ms': cfg.get('huginn_wifi_scan_duration_ms', 15000),
+            'ble_spam_threshold':    cfg.get('huginn_ble_spam_threshold', 20),
+            'skimmer_names':         cfg.get('huginn_skimmer_names', ''),
+            'companion':             self._companion_name,
+            'connected':             bool(self.serial_connected),
+        }
+
+    def push_huginn_config(self, values):
+        """Validate, persist and queue Huginn `set ...` commands.
+
+        Webapp thread calls this. The serial listener thread drains the queue
+        and writes to the device; we never touch the serial handle here.
+        """
+        clean, err = self._validate_huginn_values(values or {})
+        if err:
+            return {'error': err}
+        if not clean:
+            return {'error': 'no values supplied'}
+
+        # Persist user choices so they re-push on the next reconnect.
+        cfg = self.shared_data.config
+        if 'wifi_scan_duration_ms' in clean:
+            cfg['huginn_wifi_scan_duration_ms'] = clean['wifi_scan_duration_ms']
+        if 'ble_spam_threshold' in clean:
+            cfg['huginn_ble_spam_threshold'] = clean['ble_spam_threshold']
+        if 'skimmer_names' in clean:
+            cfg['huginn_skimmer_names'] = clean['skimmer_names']
+        try:
+            self.shared_data.save_config()
+        except Exception as e:
+            logger.warning(f"Huginn config: save_config failed: {e}")
+
+        queued = []
+        if self.serial_connected and self._companion_name == 'Huginn':
+            for line in self._huginn_lines_from(clean):
+                self._huginn_config_queue.put(line)
+                queued.append(line.decode('ascii', errors='replace').strip())
+
+        return {
+            'success': True,
+            'saved': clean,
+            'queued': queued,
+            'live': bool(queued),
+        }
+
+    @staticmethod
+    def _huginn_lines_from(clean):
+        lines = []
+        if 'wifi_scan_duration_ms' in clean:
+            lines.append(f"set wifi_scan_duration_ms {clean['wifi_scan_duration_ms']}\r\n".encode('ascii'))
+        if 'ble_spam_threshold' in clean:
+            lines.append(f"set ble_spam_threshold {clean['ble_spam_threshold']}\r\n".encode('ascii'))
+        if 'skimmer_names' in clean:
+            lines.append(f"set skimmer_names {clean['skimmer_names']}\r\n".encode('ascii'))
+        return lines
+
+    def _huginn_initial_push_lines(self):
+        """Build the handshake push from shared_data.config — only keys the
+        user has actually set (missing keys leave firmware defaults alone)."""
+        cfg = self.shared_data.config
+        clean = {}
+        if 'huginn_wifi_scan_duration_ms' in cfg:
+            clean['wifi_scan_duration_ms'] = cfg['huginn_wifi_scan_duration_ms']
+        if 'huginn_ble_spam_threshold' in cfg:
+            clean['ble_spam_threshold'] = cfg['huginn_ble_spam_threshold']
+        if 'huginn_skimmer_names' in cfg and cfg['huginn_skimmer_names']:
+            clean['skimmer_names'] = cfg['huginn_skimmer_names']
+        validated, _ = self._validate_huginn_values(clean)
+        return self._huginn_lines_from(validated or {})
+
+    def _drain_huginn_queue(self, ser):
+        """Write any pending `set ...` lines to the serial device. Caller owns
+        the serial handle. Reads briefly after each write to consume the
+        firmware's `{"ok":...}` reply so it doesn't bleed into scan parsing."""
+        sent = 0
+        while True:
+            try:
+                line = self._huginn_config_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                ser.write(line)
+                sent += 1
+                # Give firmware a moment, then drain the JSON reply.
+                time.sleep(0.1)
+                try:
+                    reply = ser.read(ser.in_waiting or 0)
+                    if reply:
+                        logger.info(f"Huginn config: {line.strip()!r} -> {reply!r}")
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Huginn config write failed: {e}")
+                # Put it back so we retry on the next reconnect.
+                self._huginn_config_queue.put(line)
+                break
+        return sent
 
     def _detect_esp32_serial(self):
         """Auto-detect an Espressif ESP32 on /dev/ttyACM* or /dev/ttyUSB*."""
@@ -1758,6 +1905,12 @@ class WardrivingEngine:
                 except Exception:
                     self._companion_name = 'Companion'  # Unknown fallback
 
+                # Push runtime config to Huginn at handshake. Firmware state is
+                # RAM-only, so this re-applies on every reconnect.
+                if self._companion_name == 'Huginn':
+                    for line in self._huginn_initial_push_lines():
+                        self._huginn_config_queue.put(line)
+
                 cycle_index = 0
 
                 while self._running:
@@ -1771,6 +1924,10 @@ class WardrivingEngine:
                         if scan_type.startswith('ble') or scan_type == 'pineap':
                             ser.write(b"capture -stop\r\n")
                             time.sleep(0.2)
+                        # Drain any pending Huginn `set ...` commands queued by
+                        # the webapp before the next scan starts emitting data.
+                        if self._companion_name == 'Huginn':
+                            self._drain_huginn_queue(ser)
                         ser.reset_input_buffer()
                         ser.write(cmd)
                         logger.debug(f"HuginnESP cmd: {cmd.strip()}")
