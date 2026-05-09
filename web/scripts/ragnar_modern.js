@@ -14670,6 +14670,7 @@ async function loadWardrivingData() {
         updateWardrivingUI(status);
         renderWardrivingSessions(sessionsData.sessions || []);
         loadWardrivingOnBootState();
+        loadHuginnConfig();
 
         if (status.running) {
             if (!_wardrivingInterval) {
@@ -15025,6 +15026,73 @@ function updateSerialStatus(status) {
         if (btn) btn.textContent = 'Connect';
     }
     if (countEl) countEl.textContent = status.serial_networks || '0';
+    _updateHuginnConfigBadge(status);
+}
+
+function _updateHuginnConfigBadge(status) {
+    const stateEl = document.getElementById('wd-huginn-config-state');
+    if (!stateEl) return;
+    const isHuginn = status && status.companion_name === 'Huginn' && status.serial_connected;
+    if (isHuginn) {
+        stateEl.textContent = 'Live (Huginn connected)';
+        stateEl.className = 'text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-400';
+    } else {
+        stateEl.textContent = 'Saved (push on connect)';
+        stateEl.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400';
+    }
+}
+
+async function loadHuginnConfig() {
+    try {
+        const res = await fetch('/api/wardriving/huginn_config');
+        const data = await res.json();
+        if (data.error) return;
+        const sm = document.getElementById('wd-huginn-scan-ms');
+        const bs = document.getElementById('wd-huginn-ble-spam');
+        const sn = document.getElementById('wd-huginn-skimmer-names');
+        if (sm) sm.value = (data.wifi_scan_duration_ms ?? '');
+        if (bs) bs.value = (data.ble_spam_threshold ?? '');
+        if (sn) sn.value = (data.skimmer_names ?? '');
+        _updateHuginnConfigBadge({
+            companion_name: data.companion,
+            serial_connected: data.connected
+        });
+    } catch (e) {
+        console.error('[Wardriving] huginn config load error:', e);
+    }
+}
+
+async function saveHuginnConfig() {
+    const sm = document.getElementById('wd-huginn-scan-ms');
+    const bs = document.getElementById('wd-huginn-ble-spam');
+    const sn = document.getElementById('wd-huginn-skimmer-names');
+    const msg = document.getElementById('wd-huginn-config-msg');
+    const body = {};
+    if (sm && sm.value !== '') body.wifi_scan_duration_ms = parseInt(sm.value, 10);
+    if (bs && bs.value !== '') body.ble_spam_threshold = parseInt(bs.value, 10);
+    if (sn) body.skimmer_names = sn.value;
+    try {
+        if (msg) { msg.textContent = 'Saving…'; msg.className = 'text-xs text-gray-400'; }
+        const res = await fetch('/api/wardriving/huginn_config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            if (msg) { msg.textContent = 'Error: ' + (data.error || res.statusText); msg.className = 'text-xs text-red-400'; }
+            return;
+        }
+        if (msg) {
+            msg.textContent = data.live
+                ? `Saved · pushed ${data.queued.length} command${data.queued.length === 1 ? '' : 's'} to Huginn`
+                : 'Saved · will push on next Huginn connect';
+            msg.className = 'text-xs text-emerald-400';
+        }
+    } catch (e) {
+        console.error('[Wardriving] huginn config save error:', e);
+        if (msg) { msg.textContent = 'Error: ' + e.message; msg.className = 'text-xs text-red-400'; }
+    }
 }
 
 function loadWardrivingTableByType() {

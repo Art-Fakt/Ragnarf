@@ -6299,6 +6299,26 @@ def wardriving_serial():
         logger.error(f"Wardriving serial error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/wardriving/huginn_config', methods=['GET', 'POST'])
+def wardriving_huginn_config():
+    """Get or set Huginn runtime knobs (wifi_scan_duration_ms, ble_spam_threshold, skimmer_names).
+
+    Persists to shared_config.json and, if a Huginn companion is connected,
+    queues `set ...` commands on the listener thread for live application.
+    """
+    try:
+        engine = _get_wardriving_engine()
+        if request.method == 'GET':
+            return jsonify(engine.get_huginn_config())
+        data = request.get_json(silent=True) or {}
+        result = engine.push_huginn_config(data)
+        if 'error' in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Wardriving huginn_config error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/wardriving/track')
 def wardriving_track():
     """Get GPS track for current session (for map display)."""
