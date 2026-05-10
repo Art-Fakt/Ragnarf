@@ -153,11 +153,26 @@ class WardrivingSession:
             conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_bt_mac ON bluetooth_devices(mac)
             """)
-            # Migrate older bluetooth_devices tables that lack new columns
+            # Migrate older bluetooth_devices tables that lack new columns.
+            # SQLite ALTER TABLE doesn't support parameter binding, so we
+            # interpolate — but only after asserting names/values match a
+            # strict identifier/literal whitelist, so future edits to this
+            # list can't accidentally smuggle in unsafe SQL.
+            _BT_MIGRATE_COLS = (
+                ('best_rssi',     '-100'),
+                ('best_lat',      'NULL'),
+                ('best_lon',      'NULL'),
+                ('pending_lat',   'NULL'),
+                ('pending_lon',   'NULL'),
+                ('pending_count', '0'),
+            )
+            for _name, _default in _BT_MIGRATE_COLS:
+                assert _name.replace('_', '').isalnum(), f'unsafe column name: {_name!r}'
+                assert _default in ('NULL',) or _default.lstrip('-').isdigit(), \
+                    f'unsafe default literal: {_default!r}'
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(bluetooth_devices)").fetchall()}
-                for col, default in [('best_rssi', '-100'), ('best_lat', 'NULL'), ('best_lon', 'NULL'),
-                                     ('pending_lat', 'NULL'), ('pending_lon', 'NULL'), ('pending_count', '0')]:
+                for col, default in _BT_MIGRATE_COLS:
                     if col not in cols:
                         conn.execute(f"ALTER TABLE bluetooth_devices ADD COLUMN {col} DEFAULT {default}")
             except Exception:
