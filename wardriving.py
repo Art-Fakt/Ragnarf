@@ -1163,13 +1163,33 @@ class WardrivingEngine:
         # exclude it. This prevents GPS from opening the ESP32's serial port
         # and stealing bytes (which causes GPS to report 0 sats and the serial
         # listener to mis-classify the device).
-        serial_port = self.shared_data.config.get('wardriving_serial_port', '')
-        pre_detected_esp = self._detect_esp32_serial() if not serial_port else None
+        #
+        # IMPORTANT: only trust the saved `wardriving_serial_port` config if
+        # udev STILL says it's an Espressif device. Stale values from prior
+        # sessions (e.g. ttyACM0 was once an ESP32, now it's a GPS) would
+        # otherwise blindly exclude the GPS port and make detection silently
+        # fail. Verifying before adding fixes a bug where GPS auto-detect
+        # returns None despite the device being properly enumerated.
+        saved_serial_port = self.shared_data.config.get('wardriving_serial_port', '')
+        verified_saved = (
+            saved_serial_port
+            and os.path.exists(saved_serial_port)
+            and self._port_is_espressif(saved_serial_port)
+        )
+        if saved_serial_port and not verified_saved:
+            logger.info(
+                f"Saved wardriving_serial_port={saved_serial_port} is no longer an "
+                f"Espressif device; not using it as a GPS exclude"
+            )
+        pre_detected_esp = self._detect_esp32_serial() if not verified_saved else None
         esp_exclude = set()
-        if serial_port:
-            esp_exclude.add(serial_port)
+        if verified_saved:
+            esp_exclude.add(saved_serial_port)
         if pre_detected_esp:
             esp_exclude.add(pre_detected_esp)
+        # Keep the rest of the start() flow working with the local `serial_port`
+        # variable it expects — only the *verified* value is allowed through.
+        serial_port = saved_serial_port if verified_saved else ''
 
         # Start GPS (exclude known ESP32 ports from probing)
         from gps_manager import GPSManager
