@@ -1635,19 +1635,59 @@ class WardrivingEngine:
         5745, 5765, 5785, 5805, 5825,
     ]
 
+    def _iface_type(self, interface):
+        """Return current iw interface type (managed/monitor/...) or '' on failure."""
+        try:
+            r = subprocess.run(['iw', 'dev', interface, 'info'],
+                               capture_output=True, text=True, timeout=3)
+            if r.returncode == 0:
+                m = re.search(r'^\s*type\s+(\S+)', r.stdout, re.MULTILINE)
+                if m:
+                    return m.group(1).lower()
+        except Exception:
+            pass
+        return ''
+
     def _prepare_interface(self, interface):
-        """Unblock rfkill and bring the interface admin-up. Idempotent."""
+        """Ensure interface is unblocked, in managed mode, and admin-up.
+
+        mt76x2u + pwnagotchi failure mode: pwnagotchi puts USB adapters into
+        monitor mode for handshake capture, which makes nl80211 scans return
+        -EOPNOTSUPP. Forcing type=managed reclaims the interface for active
+        scanning. Idempotent — a no-op when already managed+up.
+        """
+        # rfkill unblock — cheap, idempotent
         try:
             subprocess.run(['sudo', 'rfkill', 'unblock', 'wifi'],
                            capture_output=True, timeout=3)
         except Exception as e:
             logger.debug(f"rfkill unblock failed: {e}")
+
+        current_type = self._iface_type(interface)
+
+        # If not managed, do the full down → set type → up dance.
+        if current_type and current_type != 'managed':
+            logger.warning(
+                f"Wardriving: {interface} is in '{current_type}' mode "
+                f"(likely pwnagotchi/airmon) — forcing managed for scanning"
+            )
+            try:
+                subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'down'],
+                               capture_output=True, timeout=3)
+                r = subprocess.run(['sudo', 'iw', 'dev', interface, 'set', 'type', 'managed'],
+                                   capture_output=True, text=True, timeout=3)
+                if r.returncode != 0:
+                    logger.warning(f"iw set type managed on {interface} failed: {r.stderr.strip()}")
+            except Exception as e:
+                logger.warning(f"forcing managed on {interface} exception: {e}")
+
+        # Always bring it up (cheap no-op if already up)
         try:
             r = subprocess.run(['sudo', 'ip', 'link', 'set', interface, 'up'],
                                capture_output=True, text=True, timeout=3)
             if r.returncode == 0:
                 if interface not in self._iface_prepared:
-                    logger.info(f"Wardriving: brought {interface} up")
+                    logger.info(f"Wardriving: {interface} ready (type=managed, up)")
                 self._iface_prepared.add(interface)
             else:
                 logger.warning(f"ip link set {interface} up failed: {r.stderr.strip()}")
