@@ -2010,6 +2010,15 @@ class WardrivingEngine:
                 trigger_cmd,
                 capture_output=True, text=True, timeout=5
             )
+            # Retry once on EBUSY — another process (NetworkManager, WiFiManager)
+            # may have a scan in flight on this radio. Wait long enough for a
+            # typical scan to complete, then try again.
+            if trigger.returncode != 0 and 'busy' in (trigger.stderr or '').lower():
+                time.sleep(2.5)
+                trigger = subprocess.run(
+                    trigger_cmd,
+                    capture_output=True, text=True, timeout=5
+                )
             if trigger.returncode == 0:
                 # Wait for the full sweep to finish (typically 2-3 s for all channels)
                 time.sleep(2.0)
