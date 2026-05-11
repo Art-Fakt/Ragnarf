@@ -14954,15 +14954,53 @@ function _renderWifiAdaptersBar(status) {
         </div>`;
     }
 
-    // Header chip showing current band mode (only when meaningful: >=2 adapters)
+    // Header chip showing current band mode (only when meaningful: >=2 adapters).
+    // Clickable to flip mode + restart wardriving so the change takes effect.
     let modeHeader = '';
     if (details.length >= 2) {
         const modeLabel = bandMode === 'split'
             ? '<span class="text-emerald-400 font-bold">Split bands</span> <span class="text-gray-500">(each adapter on its own band — faster cycles, no redundant sweeps)</span>'
             : '<span class="text-yellow-400 font-bold">Redundant</span> <span class="text-gray-500">(every adapter sweeps every band — more reliable, slower)</span>';
-        modeHeader = `<div class="text-[11px] mb-1">Scan mode: ${modeLabel}</div>`;
+        const toggleTo = bandMode === 'split' ? 'redundant' : 'split';
+        modeHeader = `<div class="text-[11px] mb-1 flex items-center gap-2">
+            <span>Scan mode: ${modeLabel}</span>
+            <button onclick="toggleWardrivingBandMode('${toggleTo}')" class="px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-cyan-300 text-[10px] font-bold border border-slate-600">switch to ${toggleTo}</button>
+        </div>`;
     }
     bar.innerHTML = modeHeader + cards + summary;
+}
+
+async function toggleWardrivingBandMode(newMode) {
+    if (!confirm(`Switch wardriving to "${newMode}" mode?\n\nThis stops and restarts the current session — your data is preserved (same DB), but the running session ID will change.`)) return;
+    try {
+        // 1. Persist config so the new mode survives reboots
+        const cfgRes = await fetch('/api/config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({wardriving_band_mode: newMode})
+        });
+        if (!cfgRes.ok) throw new Error('config write failed');
+
+        // 2. Stop the current session — engine reads band_mode at start()
+        await fetch('/api/wardriving/stop', {method: 'POST'});
+
+        // 3. Start a new session that picks up the new mode
+        const startRes = await fetch('/api/wardriving/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await startRes.json();
+        if (data.error) {
+            alert('Start failed: ' + data.error);
+            return;
+        }
+        if (typeof addConsoleMessage === 'function') {
+            addConsoleMessage(`Wardriving band mode → ${newMode}`, 'success');
+        }
+    } catch (e) {
+        alert('Band-mode switch failed: ' + e.message);
+    }
 }
 
 async function saveWardrivingDeviceName(name) {
