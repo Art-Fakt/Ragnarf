@@ -2053,6 +2053,14 @@ class WardrivingEngine:
         bettercap monitor child, manual `iw set type monitor`) gets reclaimed.
         Only pwnagotchi mode — explicitly started by the user — is allowed to
         flip an adapter back to monitor.
+
+        DELIBERATE: wardriving and AP mode are MUTUALLY EXCLUSIVE by design.
+        If Ragnar enters AP mode (wlan0 type='ap' via hostapd) while wardriving
+        is active, this method will force wlan0 back to 'managed' and the AP
+        will collapse. That is intentional — wardriving needs every radio in
+        scannable state. If you want AP mode, stop wardriving first (or never
+        enable wardriving_on_boot). Do not add an "if type=='ap' then skip"
+        guard here without re-discussing this trade-off.
         """
         # rfkill unblock — cheap, idempotent
         try:
