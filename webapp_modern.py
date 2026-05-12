@@ -3185,9 +3185,7 @@ def update_config():
         if epd_type_changed:
             response['restart_required'] = True
             response['message'] = 'Display type changed - restarting Ragnar service...'
-            import threading
             def _delayed_restart():
-                import time, os, signal
                 time.sleep(2)  # Give the response time to reach the client
                 logger.info(f"Restarting Ragnar service for EPD type change to: {shared_data.config.get('epd_type')}")
                 subprocess.Popen(['systemctl', 'restart', 'ragnar.service'])
