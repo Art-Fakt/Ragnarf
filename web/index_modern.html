@@ -4791,8 +4791,9 @@
     </main>
 
     <!-- Kiosk wardriving live view (rendered only when body.kiosk-mode is set
-         and the URL hash is #wardriving). Sized for 1280x400 Pi Flux landscape. -->
-    <section id="kiosk-wardriving-view" aria-hidden="true">
+         and the URL hash is #wardriving). Sized for 1280x400 Pi Flux landscape.
+         Inline display:none guards against stylesheet load order / cache. -->
+    <section id="kiosk-wardriving-view" aria-hidden="true" style="display:none;">
         <div class="kiosk-panel">
             <div class="kiosk-panel-title">Networks (session)</div>
             <div class="kiosk-bignum" id="kiosk-total-networks">—</div>
