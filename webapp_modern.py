@@ -1040,6 +1040,55 @@ def _kiosk_running() -> bool:
         return False
 
 
+def _spawn_kiosk_in_session() -> bool:
+    """Find a user with an active wayland/X session and launch the kiosk
+    wrapper into it. Returns True if we managed to dispatch a spawn — not a
+    guarantee chromium actually rendered. Used in autostart mode so toggling
+    enable from the web UI shows the kiosk immediately, without waiting for
+    next login."""
+    import pwd
+    for entry in pwd.getpwall():
+        if not (1000 <= entry.pw_uid < 65534):
+            continue
+        runtime_dir = f"/run/user/{entry.pw_uid}"
+        if not os.path.isdir(runtime_dir):
+            continue
+        try:
+            socket_names = [
+                n for n in os.listdir(runtime_dir)
+                if n.startswith('wayland-') and not n.endswith('.lock')
+            ]
+        except OSError:
+            socket_names = []
+        if not socket_names:
+            continue
+        wl = sorted(socket_names)[0]
+        cmd = [
+            'sudo', '-u', entry.pw_name, '-n',
+            'env',
+            f"HOME={entry.pw_dir}",
+            f"XDG_RUNTIME_DIR={runtime_dir}",
+            f"WAYLAND_DISPLAY={wl}",
+            "DISPLAY=:0",
+            f"RAGNAR_REPO={os.path.dirname(os.path.abspath(__file__))}",
+            '/usr/local/bin/ragnar-kiosk-run',
+        ]
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            logger.info(f"[kiosk] spawned into {entry.pw_name}'s session via {wl}")
+            return True
+        except Exception as exc:
+            logger.error(f"[kiosk] failed to spawn into {entry.pw_name}'s session: {exc}")
+    logger.warning("[kiosk] no active wayland session — will launch on next login")
+    return False
+
+
 def _dispatch_kiosk_change(prev_enabled: bool, new_enabled: bool, settings_changed: bool) -> None:
     """Background worker: install/start/stop the kiosk to match config.
     Handles both modes (autostart .desktop entry on Pi OS Desktop, systemd
@@ -1064,8 +1113,13 @@ def _dispatch_kiosk_change(prev_enabled: bool, new_enabled: bool, settings_chang
                 else:
                     logger.info("[kiosk] systemd service enabled and started")
             else:
-                logger.info("[kiosk] autostart entry installed — will launch on next login")
+                # Autostart mode: install handles next-login flow. Spawn now too.
+                if not _kiosk_running():
+                    _spawn_kiosk_in_session()
         elif prev_enabled and not new_enabled:
+            # Kill any running kiosk chromium first (autostart mode)
+            subprocess.run(['sudo', 'pkill', '-f', 'ragnar-kiosk-chromium'],
+                           capture_output=True, timeout=10, check=False)
             # Tear down both possible artifacts via the uninstaller script
             logger.info(f"[kiosk] running uninstaller: {KIOSK_UNINSTALL_SCRIPT}")
             subprocess.run(
@@ -1082,11 +1136,12 @@ def _dispatch_kiosk_change(prev_enabled: bool, new_enabled: bool, settings_chang
                 else:
                     logger.info("[kiosk] service restarted to pick up new settings")
             else:
-                # Autostart mode: kill any running kiosk chromium so the user
-                # can relaunch with new settings (the wrapper reads config fresh).
-                subprocess.run(['pkill', '-f', 'ragnar-kiosk-chromium'],
+                # Autostart mode: kill any running kiosk chromium and relaunch
+                # so it picks up new settings.
+                subprocess.run(['sudo', 'pkill', '-f', 'ragnar-kiosk-chromium'],
                                capture_output=True, timeout=10, check=False)
-                logger.info("[kiosk] killed running kiosk chromium; user must relaunch")
+                time.sleep(1)
+                _spawn_kiosk_in_session()
     except subprocess.TimeoutExpired:
         logger.error("[kiosk] dispatch timed out")
     except Exception as exc:
