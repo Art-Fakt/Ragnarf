@@ -2835,10 +2835,6 @@ class WardrivingEngine:
 
         while self._running:
             try:
-                # 460800 matches HuginnESP/config.h SERIAL_BAUD. Older Huginn
-                # firmware (≤1.0) was 115200 — re-flash from the faster-baud
-                # branch or this listener will read garbage and fall back to
-                # the Piglet identification path.
                 ser = pyserial.Serial(self._serial_port, 460800, timeout=2)
                 self.serial_connected = True
                 logger.info(f"Serial connected: {self._serial_port}")
@@ -2899,10 +2895,6 @@ class WardrivingEngine:
                         self._huginn_config_queue.put(line)
                     self._huginn_handshake_pushed = True
 
-                # Huginn always runs in its built-in `wardrive` mode — a tight
-                # ~4 s WiFi+BLE alternation that doesn't burn cycles on the
-                # stationary-recon rotation. Piglet falls through to the
-                # legacy scan_cycle since it doesn't speak `wardrive`.
                 if self._companion_name == 'Huginn':
                     self._run_huginn_wardrive_loop(ser)
                     ser.close()
@@ -2972,22 +2964,8 @@ class WardrivingEngine:
         logger.info("Serial ESP32 listener stopped")
 
     def _run_huginn_wardrive_loop(self, ser):
-        """Drive Huginn's continuous wardrive mode (Huginn-only).
-
-        Sends `wardrive` once and reads the resulting stream until the
-        wardriving session stops or the serial connection drops. Compared
-        to the rotating scan_cycle, this:
-          * keeps Huginn in tight 2.5 s WiFi + 1.5 s BLE-all alternation
-          * skips evil-twin / pineapple / skimmer dedicated windows (those
-            detections still fire passively from the BLE stream)
-          * eliminates the per-iteration stop/reset_input_buffer/write
-            churn that drops bytes at cycle boundaries
-
-        """
         self._current_esp_mode = 'wardrive'
         try:
-            # Drain queued `set ...` knobs first so the wardrive cycle
-            # starts with the host's preferred values applied.
             self._drain_huginn_queue(ser)
             ser.reset_input_buffer()
             ser.write(b"wardrive\r\n")
@@ -3004,8 +2982,6 @@ class WardrivingEngine:
                     line = raw.decode('utf-8', errors='replace').strip()
                     if line:
                         self._parse_serial_line(line)
-                # Periodically drain queued config changes without
-                # interrupting the wardrive stream.
                 now = time.time()
                 if now - last_config_drain > 5:
                     self._drain_huginn_queue(ser)
@@ -3014,7 +2990,6 @@ class WardrivingEngine:
                 logger.debug(f"Serial read error (wardrive): {e}")
                 break
 
-        # Flush any half-parsed multi-line entry on exit.
         if self._serial_entry_buffer.get('bssid'):
             pos = self._gps.get_position() if self._gps else None
             self._flush_serial_entry(
@@ -3024,9 +2999,6 @@ class WardrivingEngine:
             )
             self._serial_entry_buffer = {}
 
-        # Politely stop Huginn so it returns to its idle cycle when Ragnar
-        # disconnects — otherwise it keeps flooding the next listener with
-        # wardrive output before they can identify the companion.
         try:
             ser.write(b"stop\r\n")
         except Exception:
