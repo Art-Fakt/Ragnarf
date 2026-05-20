@@ -14820,7 +14820,8 @@ function updateWardrivingUI(status) {
                 const modeLabels = {
                     wifi: 'WiFi', 'ble-flipper': '🐬 Flipper',
                     'ble-airtag': '🏷️ AirTag', 'ble-skimmer': '💳 Skimmer',
-                    pineap: '🍍 PineAP', ble: 'BLE', stations: 'Stations'
+                    pineap: '🍍 PineAP', ble: 'BLE', stations: 'Stations',
+                    wardrive: '🏎️ Wardrive (fast)'
                 };
                 modeEl.textContent = modeLabels[status.esp_mode] || status.esp_mode || '';
             }
