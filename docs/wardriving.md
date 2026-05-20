@@ -11,6 +11,12 @@ The system has three data sources:
 
 Everything logged automatically receives GPS coordinates if a GPS receiver is connected.
 
+### GPS recovery during dropouts
+
+Most wardrivers log observations with GPS-at-scan-time and discard the rest. Ragnar logs a GPS breadcrumb track during the session and runs a post-pass that backfills missing positions for any observation seen within 5 minutes of a real GPS point. The interpolation is speed-aware — when endpoint speeds differ (slowing for a tunnel, accelerating out the far side), it uses constant-acceleration math instead of constant-velocity, shifting positions toward whichever endpoint the device actually spent more time near.
+
+Details and the math are in the [GPS section](#gps) below.
+
 ---
 
 ## Hardware

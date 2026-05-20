@@ -58,6 +58,7 @@ The portal supports network scanning with signal strength, manual entry for hidd
 ## 🌟 Features
 
 - **Wi-Fi Client Isolation Testing** — AirSnitch tests whether a network properly isolates clients using GTK abuse, gateway bouncing, and port stealing attacks. See [AirSnitch Guide](docs/airsnitch.md)
+- **Wardriving with GPS recovery** — Logs WiFi networks, BLE devices, and cell towers with GPS positions while driving. Exports to WiGLE CSV / KML. Most wardrivers log observations with GPS-at-scan-time and discard the rest; Ragnar logs a GPS breadcrumb track during the session and runs a post-pass that backfills missing positions for any observation seen within 5 minutes of a real GPS point. The interpolation is speed-aware — when endpoint speeds differ (slowing for a tunnel, accelerating out the far side), it uses constant-acceleration math instead of constant-velocity, shifting positions toward whichever endpoint the device actually spent more time near. See [Wardriving Guide](docs/wardriving.md)
 - **Network Scanning** — Identifies live hosts and open ports
 - **Vulnerability Assessment** — Scans using Nmap and other tools
 - **Multi-Source Threat Intelligence** — Real-time fusion from CISA KEV, NVD CVE, AlienVault OTX, and MITRE ATT&CK
