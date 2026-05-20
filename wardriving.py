@@ -2835,7 +2835,11 @@ class WardrivingEngine:
 
         while self._running:
             try:
-                ser = pyserial.Serial(self._serial_port, 115200, timeout=2)
+                # 460800 matches HuginnESP/config.h SERIAL_BAUD. Older Huginn
+                # firmware (≤1.0) was 115200 — re-flash from the faster-baud
+                # branch or this listener will read garbage and fall back to
+                # the Piglet identification path.
+                ser = pyserial.Serial(self._serial_port, 460800, timeout=2)
                 self.serial_connected = True
                 logger.info(f"Serial connected: {self._serial_port}")
 
