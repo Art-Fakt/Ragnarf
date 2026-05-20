@@ -11,6 +11,12 @@ The system has three data sources:
 
 Everything logged automatically receives GPS coordinates if a GPS receiver is connected.
 
+### GPS recovery during dropouts
+
+Most wardrivers log observations with GPS-at-scan-time and discard the rest. Ragnar logs a GPS breadcrumb track during the session and runs a post-pass that backfills missing positions for any observation seen within 5 minutes of a real GPS point. The interpolation is speed-aware — when endpoint speeds differ (slowing for a tunnel, accelerating out the far side), it uses constant-acceleration math instead of constant-velocity, shifting positions toward whichever endpoint the device actually spent more time near.
+
+Details and the math are in the [GPS section](#gps) below.
+
 ---
 
 ## Hardware
@@ -24,7 +30,7 @@ Everything logged automatically receives GPS coordinates if a GPS receiver is co
 | Processor | ESP32-S3, 240 MHz |
 | Flash | 16 MB |
 | PSRAM | 8 MB OPI |
-| Serial | USB CDC, 115200 baud |
+| Serial | USB CDC, 460800 baud |
 | Firmware | [HuginnESP](https://github.com/PierreGode/HuginnESP) (PlatformIO Arduino) |
 | Libraries | LovyanGFX 1.1.16, NimBLE-Arduino 1.4.1 |
 
@@ -39,7 +45,7 @@ Optional USB GPS receiver (NMEA via pyserial). Auto-detected at startup.
 ```
 ┌─────────────────────┐     USB Serial      ┌──────────────────┐
 │  Raspberry Pi / PC  │◄───────────────────►│   HuginnESP      │
-│                     │   115200 baud        │   ESP32-S3       │
+│                     │   460800 baud        │   ESP32-S3       │
 │  Ragnar             │                      │                  │
 │  ├─ wardriving.py   │   JSON + alerts      │  ├─ WiFi scan    │
 │  ├─ webapp_modern.py│◄────────────────────│  ├─ BLE scan     │
@@ -68,23 +74,26 @@ Optional USB GPS receiver (NMEA via pyserial). Auto-detected at startup.
 | `stop` | Stop active scan, return to auto-cycle |
 | `capture -stop` | Stop BLE capture |
 | `status` | Get current mode (JSON) |
+| `wardrive` | Enter the fast wardrive loop (default for HuginnESP) |
 
-### Scan Cycle
+### Wardrive Mode (default for HuginnESP)
 
-Ragnar rotates through these steps:
+When a HuginnESP companion is detected, Ragnar issues `wardrive` once at handshake and reads the resulting stream continuously. The firmware then alternates two exclusive radio phases:
 
-| Step | Command | Duration | Mode label |
-|------|---------|----------|------------|
-| 1 | `scanap` | 15s | wifi |
-| 2 | `blescan -f` | 8s | ble-filtered |
-| 3 | `scanap` | 15s | wifi |
-| 4 | `blescan -a` | 8s | ble-all |
-| 5 | `scanap` | 15s | wifi |
-| 6 | `capture -skimmer` | 8s | ble-skimmer |
-| 7 | `scanap` | 15s | wifi |
-| 8 | `pineap` | 10s | pineap |
+| Phase | Duration | Activity | Mode label |
+|-------|----------|----------|------------|
+| WiFi  | ~2–5 s   | Per-channel active scans walking a weighted channel list | `wardrive` |
+| BLE   | 1.5 s    | `BLE_MODE_ALL` — every advertisement emitted as JSON | `wardrive` |
 
-Total cycle: ~94 seconds.
+The WiFi phase walks a fixed channel schedule that visits high-traffic channels (1/6/11 on 2.4 GHz, the non-DFS UNII subset on 5 GHz) several times per pass and the rarer/DFS channels once. Each per-channel scan emits results immediately on completion, so observations stream in throughout the phase rather than batching at the end of a full sweep. On the C5 dual-band build the full schedule is ~50 channels; on the S3 (2.4 GHz only) it's ~20.
+
+The firmware also keeps a bounded on-device set of recently-emitted BSSIDs and suppresses duplicate emissions within a wardrive session — the same AP scanned on the same channel four times per cycle is only sent once. The set resets every time the host issues `wardrive`, so stopping and starting a session re-emits every visible BSSID. Ragnar's `upsert_network` still dedupes on receive; on-device dedup primarily saves serial bytes and host parse time.
+
+Flipper / AirTag / skimmer / BLE-spam alerts still fire passively from the same BLE phase. Dedicated evil-twin/pineapple scan windows are not included in the wardrive loop — run `pineap` manually if a one-shot evil-twin check is needed.
+
+### Rotating Cycle (legacy)
+
+Used when the companion identifies as something other than HuginnESP — Ragnar drives a manual rotation of `scanap` / `blescan -f` / `blescan -a` / `capture -skimmer` / `pineap` commands (94 s total cycle). The rotation is preserved for compatibility but is not the active path during normal HuginnESP operation.
 
 ### Serial Output (ESP → Ragnar)
 
@@ -180,6 +189,84 @@ Ignored lines:
 
 ---
 
+## GPS
+
+### Sources
+
+Auto-detected at startup, in priority order:
+
+1. **gpsd** on `localhost:2947` — if a `gpsd` instance is running it owns the serial device; Ragnar reads its JSON stream (`TPV` / `SKY`).
+2. **Direct NMEA serial** — `/dev/serial/by-id/*` symlinks containing GPS keywords (`gps`, `u-blox`, `ublox`, `nmea`, `gnss`, `bn-`, `vk-`).
+3. **NMEA probe** — other `by-id` entries that aren't already claimed by an ESP companion are probed at 9600/4800/38400/115200 baud for `$GP`/`$GN`/`$GL` sentences.
+4. **Raw device nodes** — `/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/ttyS*`, `/dev/ttyAMA*`, `/dev/serial0`, `/dev/serial1` — probed the same way.
+
+### NMEA Parser
+
+- **Permissive talker IDs.** The GGA/RMC/GSV regexes accept any two-letter talker prefix (GP, GN, GL, GA, GB, GI, GQ, …) so multi-GNSS modules are covered.
+- **Optional time field.** Pre-fix receivers emit GGA/RMC with empty time and position. The parser accepts these so `last_update` and satellite counters move as soon as any NMEA is received — not only after first fix.
+- **GSV parsing.** Per-constellation `$xxGSV` sentences are aggregated; the API exposes `satellites_in_view` (sum across all reporting constellations) and `snr_max` (highest reported SNR in dB-Hz). Entries that haven't been heard from in 30 s are pruned so a constellation that stops reporting doesn't inflate the total.
+- **Liveness signal.** `last_sentence` updates on any recognized NMEA line (including GSV / GSA / VTG / GLL / TXT and pre-fix GGA/RMC). `last_update` continues to mean "last positional/fix update". Together they distinguish "GPS is alive but has no fix yet" from "GPS isn't transmitting at all".
+
+### Status Fields (`/api/wardriving/gps`)
+
+| Field | Meaning |
+|-------|---------|
+| `connected` | Port open and reader thread alive |
+| `source` | `gpsd` or `serial` |
+| `port` | Device path |
+| `has_fix` | `fix_quality > 0` and lat/lon set and `last_update` within 10 s |
+| `fix_quality` | `0` no fix, `1` GPS, `2` DGPS |
+| `satellites` | Used in fix (from GGA) |
+| `satellites_in_view` | Total visible across constellations (from GSV) |
+| `snr_max` | Highest current SNR, dB-Hz |
+| `hdop` | Horizontal dilution of precision |
+| `latitude` / `longitude` / `altitude` | Most recent position |
+| `speed_kmh` / `course` | Velocity / heading |
+| `last_update` | Epoch of last GGA/RMC with position info |
+| `last_sentence` | Epoch of last *any* parsed NMEA |
+| `error` | Last error string, or `null` |
+
+### Wardriving GPS Card (UI)
+
+Shows the most actionable signals at a glance:
+
+- **Status line** — `GPS-Fix OK` / `Searching (N visible)` / `Connected` / `No GPS`. The visible count appears when there's no fix but the antenna is seeing satellites — it tells you whether you're antenna-limited or signal-limited.
+- **Coords line** — `lat, lon` once a fix is established.
+- **Sats line** — `Sats: used/in-view · SNR N dB · HDOP H`. HDOP is hidden while it's still the pre-fix 99.99 placeholder.
+
+### Network Position Preservation
+
+`upsert_network` uses `COALESCE(?, col)` for `latitude`, `longitude`, `altitude`, `best_lat`, `best_lon`, `speed_kmh`, and `hdop` on both the stronger-RSSI and weaker-RSSI update paths. Concretely: an existing row's GPS columns are **never** overwritten with NULL. A re-scan with a stronger signal but no current GPS fix keeps the previously-recorded position instead of erasing it.
+
+### GPS Backfill
+
+Each session writes one row to `gps_track` every 5 s while GPS has a fix:
+
+```
+gps_track (timestamp, latitude, longitude, altitude, speed_kmh, satellites, hdop)
+```
+
+`POST /api/wardriving/backfill_gps` (or the "Backfill GPS" button) fills in missing positions on `networks`, `bluetooth_devices`, and `cells` rows by looking up each row's `first_seen` against the breadcrumb track:
+
+1. `bisect` the track to find the two trackpoints bracketing the row's timestamp.
+2. **Both within 5 minutes:** interpolate position between them.
+3. **One side within 5 minutes:** use the nearest single trackpoint.
+4. **Neither within 5 minutes:** leave the row's coords as NULL.
+
+The interpolation is **speed-aware**. When both bracketing trackpoints have a non-zero `speed_kmh`, the position fraction along the chord uses a constant-acceleration model instead of constant-velocity:
+
+```
+v(f_time) = v1 + (v2 - v1) · f_time
+f_pos = (2·v1·f_time + (v2 − v1)·f_time²) / (v1 + v2)
+lat   = lat1 + (lat2 − lat1) · f_pos     (same for lon, alt)
+```
+
+For symmetric speeds the formula reduces to linear — steady cruising is unaffected. For asymmetric speeds (slowing into a tunnel mouth then accelerating out the far side, for example) the placement shifts toward whichever endpoint was moving slower, where the device actually spent more time. On a 1 km gap with 20→60 km/h endpoints, a time-midpoint sample moves from 50 % chord (linear) to 37.5 % chord — a 125 m correction.
+
+Falls back to linear when either endpoint speed is NULL or both are zero. The chord assumption itself isn't corrected — backfill cannot recover curve geometry from speed alone.
+
+---
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
@@ -198,6 +285,8 @@ Ignored lines:
 | GET | `/api/wardriving/serial/detect` | Auto-detect ESP32 port |
 | GET/POST | `/api/wardriving/serial` | Serial status / start/stop listener |
 | GET | `/api/wardriving/track` | GPS track (lat/lon history) |
+| POST | `/api/wardriving/backfill_gps` | Fill missing GPS on observations from the track |
+| GET/POST | `/api/wardriving/huginn_config` | Read / push HuginnESP runtime knobs |
 | POST | `/api/wardriving/device_name` | Set device name |
 | GET/POST | `/api/wardriving/on_boot` | Auto-start on boot |
 
@@ -210,24 +299,39 @@ Ignored lines:
 ```json
 {
   "running": true,
-  "session_id": "uuid",
-  "interfaces": ["wlan1"],
+  "session_id": "20260520_122919",
+  "interfaces": ["wlan0"],
   "scans_completed": 42,
   "total_networks": 156,
   "gps": {
     "connected": true,
-    "port": "/dev/ttyACM0",
-    "has_fix": true
+    "source": "serial",
+    "port": "/dev/ttyACM1",
+    "has_fix": true,
+    "fix_quality": 1,
+    "satellites": 5,
+    "satellites_in_view": 9,
+    "snr_max": 41,
+    "hdop": 1.3,
+    "latitude": 59.3293,
+    "longitude": 18.0686,
+    "altitude": 28.0,
+    "speed_kmh": 47.2,
+    "course": 184.0,
+    "last_update": 1779272835.24,
+    "last_sentence": 1779272835.24,
+    "error": null
   },
+  "companion_name": "Huginn",
   "serial_connected": true,
-  "serial_port": "/dev/ttyACM1",
-  "serial_networks": 23,
-  "esp_mode": "wifi",
+  "serial_port": "/dev/ttyACM0",
+  "serial_networks": 75,
+  "serial_unique": 62,
+  "esp_mode": "wardrive",
   "esp_ble_count": 87,
   "esp_alerts": [
     {"time": 1683456789, "alert": "AirTag found!"}
   ],
-  "serial_unique": 12,
   "bluetooth_count": 87,
   "cell_count": 3,
   "stats": { ... }
@@ -238,7 +342,7 @@ Ignored lines:
 
 ## Data Storage
 
-Each session creates a SQLite database in `data/networks/`.
+Each session creates a SQLite database at `data/wardriving/session_<id>.db`.
 
 ### Table: networks
 | Column | Type | Description |
@@ -248,20 +352,37 @@ Each session creates a SQLite database in `data/networks/`.
 | security | TEXT | WPA2, WPA3, Open, etc. |
 | channel | INT | WiFi channel |
 | frequency | INT | Frequency in MHz |
-| rssi | INT | Signal strength (dBm) |
-| lat | REAL | GPS latitude |
-| lon | REAL | GPS longitude |
-| alt | REAL | GPS altitude |
-| interface | TEXT | `wlan1`, `esp32-serial`, etc. |
+| band | TEXT | `2.4GHz`, `5GHz`, `6GHz` |
+| rssi | INT | Most recent signal strength (dBm) |
+| best_rssi | INT | Strongest signal ever observed |
+| latitude / longitude / altitude | REAL | Most recent observed position |
+| best_lat / best_lon | REAL | Position at strongest-signal observation |
+| speed_kmh / hdop | REAL | Velocity / DOP at last observation |
+| first_seen / last_seen | TEXT | ISO timestamps |
+| scan_count | INT | Number of times observed |
+| interface | TEXT | `wlan0`, `wlan1`, `esp32-serial`, `import`, etc. |
+| is_camera | INT | 1 if MAC OUI or SSID matches a known camera pattern |
 
-### Table: bluetooth
+### Table: bluetooth_devices
 | Column | Type | Description |
 |--------|------|-------------|
 | mac | TEXT | BLE MAC address |
 | name | TEXT | Device name |
 | rssi | INT | Signal strength |
 | device_type | TEXT | `BLE`, `AirTag`, `Flipper`, `Skimmer` |
-| lat/lon/alt | REAL | GPS position |
+| latitude / longitude / altitude | REAL | GPS position |
+| first_seen / last_seen | TEXT | ISO timestamps |
+
+### Table: gps_track
+GPS breadcrumb trail — one row every 5 s during a session, only while GPS has a fix. Used by `backfill_gps_from_track` to assign positions to observations made during GPS dropouts.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| timestamp | REAL | Unix epoch when the point was logged |
+| latitude / longitude / altitude | REAL | Position |
+| speed_kmh | REAL | Velocity at that point (used for constant-accel interpolation) |
+| satellites | INT | Sats used in fix |
+| hdop | REAL | Horizontal dilution of precision |
 
 ---
 
