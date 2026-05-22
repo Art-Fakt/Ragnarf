@@ -9354,6 +9354,13 @@ def get_threat_monitor_status():
 @app.route('/api/network/threat-monitor/toggle', methods=['POST'])
 def toggle_threat_monitor():
     """Enable or disable continuous threat monitoring."""
+    payload = request.get_json(silent=True) or {}
+    interval = payload.get('interval', 60)
+    try:
+        interval = max(10, min(600, int(interval)))
+    except (ValueError, TypeError):
+        interval = 60
+
     with _threat_monitor_lock:
         if _threat_monitor_state['enabled']:
             # Disable
@@ -9366,12 +9373,13 @@ def toggle_threat_monitor():
             _threat_monitor_state['findings'] = []
             _threat_monitor_state['sweep_count'] = 0
             _threat_monitor_state['last_sweep'] = None
+            _threat_monitor_state['interval'] = interval
 
             t = threading.Thread(target=_threat_monitor_loop, daemon=True, name='threat-monitor')
             _threat_monitor_state['thread'] = t
             t.start()
-            logger.info("Continuous threat monitoring ENABLED")
-            return jsonify({'enabled': True, 'message': 'Threat monitoring enabled'})
+            logger.info(f"Continuous threat monitoring ENABLED (interval={interval}s)")
+            return jsonify({'enabled': True, 'interval': interval, 'message': f'Threat monitoring enabled (every {interval}s)'})
 
 
 @app.route('/api/network/threat-monitor/clear', methods=['POST'])

@@ -3027,24 +3027,35 @@ async function toggleThreatMonitor() {
     const warning = document.getElementById('threat-monitor-warning');
     const statusEl = document.getElementById('threat-monitor-status');
     const panel = document.getElementById('threat-sweep-results');
+    const intervalInput = document.getElementById('threat-monitor-interval');
+
+    // Read interval from input, clamp 10-600
+    let interval = parseInt(intervalInput?.value) || 60;
+    interval = Math.max(10, Math.min(600, interval));
+    if (intervalInput) intervalInput.value = interval;
 
     try {
-        const resp = await fetch('/api/network/threat-monitor/toggle', { method: 'POST' });
+        const resp = await fetch('/api/network/threat-monitor/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ interval })
+        });
         const data = await resp.json();
 
         if (data.enabled) {
             if (toggle) toggle.checked = true;
+            if (intervalInput) intervalInput.disabled = true;
             if (warning) warning.classList.remove('hidden');
             if (statusEl) { statusEl.textContent = 'Monitoring…'; statusEl.classList.remove('hidden'); }
             _startThreatMonitorPoll(panel);
         } else {
             if (toggle) toggle.checked = false;
+            if (intervalInput) intervalInput.disabled = false;
             if (warning) warning.classList.add('hidden');
-            if (statusEl) { statusEl.textContent = 'Off'; statusEl.classList.add('hidden'); }
+            if (statusEl) { statusEl.textContent = ''; statusEl.classList.add('hidden'); }
             _stopThreatMonitorPoll();
         }
     } catch (err) {
-        // Revert checkbox on failure
         if (toggle) toggle.checked = !toggle.checked;
         console.error('Failed to toggle threat monitor:', err);
     }
@@ -3109,8 +3120,10 @@ async function _restoreThreatMonitorState() {
             const warning = document.getElementById('threat-monitor-warning');
             const statusEl = document.getElementById('threat-monitor-status');
             const panel = document.getElementById('threat-sweep-results');
+            const intervalInput = document.getElementById('threat-monitor-interval');
 
             if (toggle) toggle.checked = true;
+            if (intervalInput) { intervalInput.value = data.interval || 60; intervalInput.disabled = true; }
             if (warning) warning.classList.remove('hidden');
             if (statusEl) { statusEl.textContent = `Sweep #${data.sweep_count || 0}`; statusEl.classList.remove('hidden'); }
 

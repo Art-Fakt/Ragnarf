@@ -885,6 +885,11 @@
                                 <input type="checkbox" id="threat-monitor-toggle" class="sr-only peer" onchange="toggleThreatMonitor()">
                                 <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:bg-red-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
                             </label>
+                            <span class="text-xs text-gray-400">every</span>
+                            <input id="threat-monitor-interval" type="number" min="10" max="600" value="60" step="5"
+                                   class="w-16 bg-slate-900/70 border border-slate-700 focus:border-red-500 rounded px-2 py-1 text-xs text-center text-gray-200"
+                                   title="Sweep interval in seconds (min 10s)" />
+                            <span class="text-xs text-gray-400">sec</span>
                             <span id="threat-monitor-status" class="text-xs text-gray-400 hidden"></span>
                         </div>
                     </div>
@@ -896,7 +901,7 @@
                         <span class="text-amber-400 mt-0.5">⚠</span>
                         <div class="text-xs text-amber-300/90">
                             <p class="font-semibold mb-1">Continuous Threat Monitoring</p>
-                            <p>Ragnar will perform periodic WiFi airspace sweeps every 60 seconds to detect rogue access points, evil twins, and deauthentication attacks. This may cause <strong>brief network interruptions</strong> as the WiFi adapter momentarily switches channels during each scan cycle. Not recommended on connections where latency-sensitive work is in progress.</p>
+                            <p>Ragnar will perform periodic WiFi airspace sweeps at the configured interval to detect rogue access points, evil twins, and deauthentication attacks. Each sweep takes ~5 seconds. This may cause <strong>brief network interruptions</strong> as the WiFi adapter momentarily switches channels during each scan cycle. Shorter intervals increase detection speed but cause more frequent disruptions.</p>
                         </div>
                     </div>
                 </div>
