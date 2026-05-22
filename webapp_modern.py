@@ -9030,6 +9030,31 @@ def network_threat_sweep():
             capture_output=True, timeout=15
         )
         import time as _time
+        import threading as _threading
+
+        # Start iw event listener in background to catch deauth frames
+        deauth_events = []
+        def _capture_iw_events():
+            try:
+                proc = subprocess.Popen(
+                    ['sudo', 'iw', 'event', '-t'],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                # Read lines until the scan window closes
+                while proc.poll() is None:
+                    line = proc.stdout.readline()
+                    if not line:
+                        break
+                    ll = line.strip().lower()
+                    if any(kw in ll for kw in ['deauth', 'disassoc', 'disconnect']):
+                        deauth_events.append(line.strip())
+                proc.terminate()
+            except Exception:
+                pass
+
+        ev_thread = _threading.Thread(target=_capture_iw_events, daemon=True)
+        ev_thread.start()
+
         _time.sleep(4)
 
         # Get results WITH BSSID, SSID, signal, security, frequency, channel
@@ -9184,6 +9209,54 @@ def network_threat_sweep():
                             'description': f'Open network "{ssid}" — possible honeypot or evil twin'
                         })
 
+        # 5. Beacon spam detection — many SSIDs from same Espressif OUI
+        oui_ssid_count = {}
+        for line in result.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+            bm = _re.match(r'^([0-9A-Fa-f]{2}\\:[0-9A-Fa-f]{2}\\:[0-9A-Fa-f]{2}\\:[0-9A-Fa-f]{2}\\:[0-9A-Fa-f]{2}\\:[0-9A-Fa-f]{2})', line)
+            if not bm:
+                continue
+            b_oui = bm.group(1).replace('\\:', ':').upper()[:8]
+            if b_oui in _SUSPICIOUS_AP_OUIS:
+                oui_ssid_count.setdefault(b_oui, set())
+                # Extract SSID
+                rem = line[bm.end():]
+                if rem.startswith(':'):
+                    rem = rem[1:]
+                s_parts = rem.split(':')
+                s_ssid = s_parts[0] if s_parts else ''
+                if s_ssid:
+                    oui_ssid_count[b_oui].add(s_ssid)
+
+        for oui_prefix, ssid_set in oui_ssid_count.items():
+            if len(ssid_set) >= 5:
+                vendor = _SUSPICIOUS_AP_OUIS.get(oui_prefix, 'Unknown')
+                key = f'beacon_spam_{oui_prefix}'
+                if key not in seen:
+                    seen.add(key)
+                    findings.append({
+                        'type': 'Beacon Spam Attack',
+                        'severity': 'high',
+                        'ssid': f'{len(ssid_set)} fake SSIDs',
+                        'bssid': f'{oui_prefix}:*',
+                        'signal': '-',
+                        'description': f'{len(ssid_set)} different SSIDs from {vendor} OUI {oui_prefix} — likely beacon spam from a deauther/Marauder'
+                    })
+
+        # 6. Deauth detection from iw event capture
+        # Stop the event thread and check results
+        ev_thread.join(timeout=1)
+        if deauth_events:
+            findings.append({
+                'type': 'Deauth Attack Detected',
+                'severity': 'critical',
+                'ssid': own_ssid or '(your network)',
+                'bssid': own_bssid or '-',
+                'signal': '-',
+                'description': f'{len(deauth_events)} deauth/disassociation frame(s) captured during scan — active WiFi attack in progress'
+            })
+
         # Sort by severity
         sev_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
         findings.sort(key=lambda f: sev_order.get(f['severity'], 4))
@@ -9201,6 +9274,112 @@ def network_threat_sweep():
     except Exception as e:
         logger.error(f"Threat sweep error: {e}")
         return jsonify({'success': False, 'error': str(e), 'findings': []}), 500
+
+
+# ---------------------------------------------------------------------------
+# Continuous threat monitoring (background sweep loop)
+# ---------------------------------------------------------------------------
+_threat_monitor_state = {
+    'enabled': False,
+    'thread': None,
+    'findings': [],
+    'last_sweep': None,
+    'sweep_count': 0,
+    'interval': 60,  # seconds between sweeps
+}
+_threat_monitor_lock = threading.Lock()
+
+
+def _threat_monitor_loop():
+    """Background loop: runs threat sweeps at configured interval."""
+    import time as _time
+    while True:
+        with _threat_monitor_lock:
+            if not _threat_monitor_state['enabled']:
+                break
+            interval = _threat_monitor_state['interval']
+
+        try:
+            # Use the Flask test client to call our own endpoint
+            with app.test_request_context():
+                resp = network_threat_sweep()
+                # resp is a Flask Response or tuple
+                if isinstance(resp, tuple):
+                    data = resp[0].get_json()
+                else:
+                    data = resp.get_json()
+
+                if data and data.get('success') and data.get('findings'):
+                    with _threat_monitor_lock:
+                        # Deduplicate by type+bssid
+                        existing_keys = {
+                            f"{f['type']}_{f.get('bssid','')}" for f in _threat_monitor_state['findings']
+                        }
+                        for finding in data['findings']:
+                            key = f"{finding['type']}_{finding.get('bssid','')}"
+                            if key not in existing_keys:
+                                finding['first_seen'] = datetime.now().isoformat()
+                                _threat_monitor_state['findings'].append(finding)
+                                existing_keys.add(key)
+
+                with _threat_monitor_lock:
+                    _threat_monitor_state['last_sweep'] = datetime.now().isoformat()
+                    _threat_monitor_state['sweep_count'] += 1
+
+        except Exception as e:
+            logger.warning(f"Threat monitor sweep failed: {e}")
+
+        # Sleep in small increments so we can stop quickly
+        for _ in range(interval):
+            with _threat_monitor_lock:
+                if not _threat_monitor_state['enabled']:
+                    return
+            _time.sleep(1)
+
+
+@app.route('/api/network/threat-monitor', methods=['GET'])
+def get_threat_monitor_status():
+    """Get continuous threat monitor status and accumulated findings."""
+    with _threat_monitor_lock:
+        return jsonify({
+            'enabled': _threat_monitor_state['enabled'],
+            'findings': _threat_monitor_state['findings'],
+            'total': len(_threat_monitor_state['findings']),
+            'last_sweep': _threat_monitor_state['last_sweep'],
+            'sweep_count': _threat_monitor_state['sweep_count'],
+            'interval': _threat_monitor_state['interval'],
+        })
+
+
+@app.route('/api/network/threat-monitor/toggle', methods=['POST'])
+def toggle_threat_monitor():
+    """Enable or disable continuous threat monitoring."""
+    with _threat_monitor_lock:
+        if _threat_monitor_state['enabled']:
+            # Disable
+            _threat_monitor_state['enabled'] = False
+            logger.info("Continuous threat monitoring DISABLED")
+            return jsonify({'enabled': False, 'message': 'Threat monitoring disabled'})
+        else:
+            # Enable
+            _threat_monitor_state['enabled'] = True
+            _threat_monitor_state['findings'] = []
+            _threat_monitor_state['sweep_count'] = 0
+            _threat_monitor_state['last_sweep'] = None
+
+            t = threading.Thread(target=_threat_monitor_loop, daemon=True, name='threat-monitor')
+            _threat_monitor_state['thread'] = t
+            t.start()
+            logger.info("Continuous threat monitoring ENABLED")
+            return jsonify({'enabled': True, 'message': 'Threat monitoring enabled'})
+
+
+@app.route('/api/network/threat-monitor/clear', methods=['POST'])
+def clear_threat_monitor_findings():
+    """Clear accumulated threat findings."""
+    with _threat_monitor_lock:
+        _threat_monitor_state['findings'] = []
+        return jsonify({'success': True})
 
 
 @app.route('/api/wifi/scan', methods=['POST'])

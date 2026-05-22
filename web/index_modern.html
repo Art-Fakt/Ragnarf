@@ -876,7 +876,29 @@
                             </svg>
                             <span>Check External Threats</span>
                         </button>
+                        <div class="flex items-center space-x-2 border-l border-slate-700 pl-3">
+                            <label for="threat-monitor-toggle" class="text-xs text-gray-400 cursor-pointer whitespace-nowrap" title="Continuously scan WiFi airspace for rogue APs every 60 seconds">Continuous</label>
+                            <button id="threat-monitor-toggle"
+                                    onclick="toggleThreatMonitor()"
+                                    class="relative w-9 h-5 rounded-full bg-slate-700 transition-colors focus:outline-none"
+                                    role="switch" aria-checked="false"
+                                    title="Enable continuous airspace monitoring">
+                                <span id="threat-monitor-knob" class="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-gray-400 transition-transform"></span>
+                            </button>
+                            <span id="threat-monitor-status" class="text-xs text-gray-500 hidden"></span>
+                        </div>
                         <span id="host-count" class="text-sm text-gray-300">0 hosts</span>
+                    </div>
+                </div>
+
+                <!-- Threat Monitor Warning (shown when enabling) -->
+                <div id="threat-monitor-warning" class="hidden mb-4 rounded-lg border border-amber-800 bg-amber-950/30 p-3">
+                    <div class="flex items-start space-x-2">
+                        <span class="text-amber-400 mt-0.5">⚠</span>
+                        <div class="text-xs text-amber-300/90">
+                            <p class="font-semibold mb-1">Continuous Threat Monitoring</p>
+                            <p>Ragnar will perform periodic WiFi airspace sweeps every 60 seconds to detect rogue access points, evil twins, and deauthentication attacks. This may cause <strong>brief network interruptions</strong> as the WiFi adapter momentarily switches channels during each scan cycle. Not recommended on connections where latency-sensitive work is in progress.</p>
+                        </div>
                     </div>
                 </div>
 

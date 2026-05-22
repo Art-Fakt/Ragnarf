@@ -2912,6 +2912,76 @@ function formatLastScanCell(info) {
 // ---------------------------------------------------------------------------
 // External threat sweep (WiFi airspace scan for rogue APs)
 // ---------------------------------------------------------------------------
+let _threatMonitorPollTimer = null;
+
+function _renderThreatFindings(data, panel) {
+    const sevColors = {
+        critical: { border: 'border-red-700', bg: 'bg-red-950/40', badge: 'bg-red-600 text-white', text: 'text-red-300' },
+        high:     { border: 'border-orange-700', bg: 'bg-orange-950/40', badge: 'bg-orange-600 text-white', text: 'text-orange-300' },
+        medium:   { border: 'border-yellow-700', bg: 'bg-yellow-950/40', badge: 'bg-yellow-600 text-black', text: 'text-yellow-300' },
+        low:      { border: 'border-blue-700', bg: 'bg-blue-950/40', badge: 'bg-blue-600 text-white', text: 'text-blue-300' },
+    };
+
+    if (!data.findings || data.findings.length === 0) {
+        panel.className = 'mb-4 rounded-lg border border-green-800 bg-green-950/30 p-4';
+        const sweepInfo = data.sweep_count != null
+            ? `${data.sweep_count} sweep(s) completed`
+            : `Interface: ${escapeHtml(data.interface || '?')}`;
+        panel.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="text-green-400 text-lg">✓</span>
+                    <span class="text-green-300 text-sm font-medium">No external threats detected</span>
+                </div>
+                <button onclick="document.getElementById('threat-sweep-results').classList.add('hidden')" class="text-gray-500 hover:text-gray-300 text-xs">dismiss</button>
+            </div>
+            <p class="text-green-300/60 text-xs mt-1">${escapeHtml(sweepInfo)} · ${escapeHtml(data.own_network ? 'Connected to "' + data.own_network + '"' : '')}</p>`;
+        return;
+    }
+
+    const worstSev = data.findings[0].severity;
+    const colors = sevColors[worstSev] || sevColors.medium;
+    panel.className = `mb-4 rounded-lg border ${colors.border} ${colors.bg} p-4`;
+
+    let rows = data.findings.map(f => {
+        const sc = sevColors[f.severity] || sevColors.medium;
+        return `<tr class="border-b border-slate-800/50">
+            <td class="py-2 pr-3"><span class="px-1.5 py-0.5 rounded text-xs font-bold ${sc.badge}">${escapeHtml(f.severity.toUpperCase())}</span></td>
+            <td class="py-2 pr-3 text-sm font-medium ${sc.text}">${escapeHtml(f.type)}</td>
+            <td class="py-2 pr-3 text-sm font-mono text-gray-300">${escapeHtml(f.ssid)}</td>
+            <td class="py-2 pr-3 text-xs font-mono text-gray-400">${escapeHtml(f.bssid)}</td>
+            <td class="py-2 pr-3 text-xs text-gray-400">${escapeHtml(String(f.signal))}${f.signal !== '-' ? '%' : ''}</td>
+            <td class="py-2 text-xs text-gray-400">${escapeHtml(f.description)}</td>
+        </tr>`;
+    }).join('');
+
+    const total = data.total || data.findings.length;
+    const sweepInfo = data.sweep_count != null
+        ? `${data.sweep_count} sweep(s) · Last: ${data.last_sweep ? new Date(data.last_sweep).toLocaleTimeString() : '-'}`
+        : `Interface: ${escapeHtml(data.interface || '?')} · Connected to "${escapeHtml(data.own_network || '?')}"`;
+
+    panel.innerHTML = `
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center space-x-2">
+                <span class="${colors.text} text-lg">⚠</span>
+                <span class="${colors.text} text-sm font-bold">${total} threat${total > 1 ? 's' : ''} detected in WiFi airspace</span>
+            </div>
+            <div class="flex items-center space-x-2">
+                ${data.sweep_count != null ? '<button onclick="clearThreatMonitorFindings()" class="text-gray-500 hover:text-gray-300 text-xs mr-2">clear</button>' : ''}
+                <button onclick="document.getElementById('threat-sweep-results').classList.add('hidden')" class="text-gray-500 hover:text-gray-300 text-xs">dismiss</button>
+            </div>
+        </div>
+        <table class="w-full text-left">
+            <thead><tr class="border-b border-slate-700 text-xs text-gray-500">
+                <th class="pb-1 pr-3">Severity</th><th class="pb-1 pr-3">Type</th>
+                <th class="pb-1 pr-3">SSID</th><th class="pb-1 pr-3">BSSID</th>
+                <th class="pb-1 pr-3">Signal</th><th class="pb-1">Description</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+        <p class="text-xs text-gray-500 mt-2">${escapeHtml(sweepInfo)}</p>`;
+}
+
 async function runThreatSweep() {
     const btn = document.getElementById('threat-sweep-btn');
     const panel = document.getElementById('threat-sweep-results');
@@ -2937,61 +3007,7 @@ async function runThreatSweep() {
             return;
         }
 
-        if (!data.findings || data.findings.length === 0) {
-            panel.className = 'mb-4 rounded-lg border border-green-800 bg-green-950/30 p-4';
-            panel.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-2">
-                        <span class="text-green-400 text-lg">✓</span>
-                        <span class="text-green-300 text-sm font-medium">No external threats detected</span>
-                    </div>
-                    <button onclick="document.getElementById('threat-sweep-results').classList.add('hidden')" class="text-gray-500 hover:text-gray-300 text-xs">dismiss</button>
-                </div>
-                <p class="text-green-300/60 text-xs mt-1">Scanned WiFi airspace on ${escapeHtml(data.interface || '?')} · Connected to "${escapeHtml(data.own_network || '?')}"</p>`;
-            return;
-        }
-
-        // Findings found
-        const sevColors = {
-            critical: { border: 'border-red-700', bg: 'bg-red-950/40', badge: 'bg-red-600 text-white', text: 'text-red-300' },
-            high:     { border: 'border-orange-700', bg: 'bg-orange-950/40', badge: 'bg-orange-600 text-white', text: 'text-orange-300' },
-            medium:   { border: 'border-yellow-700', bg: 'bg-yellow-950/40', badge: 'bg-yellow-600 text-black', text: 'text-yellow-300' },
-            low:      { border: 'border-blue-700', bg: 'bg-blue-950/40', badge: 'bg-blue-600 text-white', text: 'text-blue-300' },
-        };
-
-        const worstSev = data.findings[0].severity;
-        const colors = sevColors[worstSev] || sevColors.medium;
-        panel.className = `mb-4 rounded-lg border ${colors.border} ${colors.bg} p-4`;
-
-        let rows = data.findings.map(f => {
-            const sc = sevColors[f.severity] || sevColors.medium;
-            return `<tr class="border-b border-slate-800/50">
-                <td class="py-2 pr-3"><span class="px-1.5 py-0.5 rounded text-xs font-bold ${sc.badge}">${escapeHtml(f.severity.toUpperCase())}</span></td>
-                <td class="py-2 pr-3 text-sm font-medium ${sc.text}">${escapeHtml(f.type)}</td>
-                <td class="py-2 pr-3 text-sm font-mono text-gray-300">${escapeHtml(f.ssid)}</td>
-                <td class="py-2 pr-3 text-xs font-mono text-gray-400">${escapeHtml(f.bssid)}</td>
-                <td class="py-2 pr-3 text-xs text-gray-400">${escapeHtml(f.signal)}%</td>
-                <td class="py-2 text-xs text-gray-400">${escapeHtml(f.description)}</td>
-            </tr>`;
-        }).join('');
-
-        panel.innerHTML = `
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center space-x-2">
-                    <span class="${colors.text} text-lg">⚠</span>
-                    <span class="${colors.text} text-sm font-bold">${data.total} threat${data.total > 1 ? 's' : ''} detected in WiFi airspace</span>
-                </div>
-                <button onclick="document.getElementById('threat-sweep-results').classList.add('hidden')" class="text-gray-500 hover:text-gray-300 text-xs">dismiss</button>
-            </div>
-            <table class="w-full text-left">
-                <thead><tr class="border-b border-slate-700 text-xs text-gray-500">
-                    <th class="pb-1 pr-3">Severity</th><th class="pb-1 pr-3">Type</th>
-                    <th class="pb-1 pr-3">SSID</th><th class="pb-1 pr-3">BSSID</th>
-                    <th class="pb-1 pr-3">Signal</th><th class="pb-1">Description</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
-            <p class="text-xs text-gray-500 mt-2">Interface: ${escapeHtml(data.interface || '?')} · Your network: "${escapeHtml(data.own_network || '?')}"</p>`;
+        _renderThreatFindings(data, panel);
 
     } catch (err) {
         panel.className = 'mb-4 rounded-lg border border-red-800 bg-red-950/30 p-4';
@@ -3002,6 +3018,136 @@ async function runThreatSweep() {
         btn.innerHTML = origHTML;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Continuous threat monitoring toggle + polling
+// ---------------------------------------------------------------------------
+async function toggleThreatMonitor() {
+    const toggle = document.getElementById('threat-monitor-toggle');
+    const knob = document.getElementById('threat-monitor-knob');
+    const warning = document.getElementById('threat-monitor-warning');
+    const statusEl = document.getElementById('threat-monitor-status');
+    const panel = document.getElementById('threat-sweep-results');
+
+    try {
+        const resp = await fetch('/api/network/threat-monitor/toggle', { method: 'POST' });
+        const data = await resp.json();
+
+        if (data.enabled) {
+            // Switched ON
+            toggle.classList.remove('bg-slate-700');
+            toggle.classList.add('bg-red-600');
+            toggle.setAttribute('aria-checked', 'true');
+            knob.classList.add('translate-x-4');
+            knob.classList.remove('bg-gray-400');
+            knob.classList.add('bg-white');
+            if (warning) warning.classList.remove('hidden');
+            if (statusEl) { statusEl.textContent = 'Monitoring…'; statusEl.classList.remove('hidden'); }
+
+            // Start polling for findings
+            _startThreatMonitorPoll(panel);
+        } else {
+            // Switched OFF
+            toggle.classList.add('bg-slate-700');
+            toggle.classList.remove('bg-red-600');
+            toggle.setAttribute('aria-checked', 'false');
+            knob.classList.remove('translate-x-4');
+            knob.classList.add('bg-gray-400');
+            knob.classList.remove('bg-white');
+            if (warning) warning.classList.add('hidden');
+            if (statusEl) { statusEl.textContent = 'Off'; statusEl.classList.add('hidden'); }
+
+            _stopThreatMonitorPoll();
+        }
+    } catch (err) {
+        console.error('Failed to toggle threat monitor:', err);
+    }
+}
+
+function _startThreatMonitorPoll(panel) {
+    _stopThreatMonitorPoll();
+    // Poll every 15 seconds for accumulated findings
+    _threatMonitorPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/network/threat-monitor');
+            const data = await resp.json();
+
+            if (!data.enabled) {
+                _stopThreatMonitorPoll();
+                return;
+            }
+
+            const statusEl = document.getElementById('threat-monitor-status');
+            if (statusEl) {
+                statusEl.textContent = `Sweep #${data.sweep_count || 0}`;
+                statusEl.classList.remove('hidden');
+            }
+
+            if (panel) {
+                panel.classList.remove('hidden');
+                _renderThreatFindings(data, panel);
+            }
+        } catch (e) {
+            console.warn('Threat monitor poll failed:', e);
+        }
+    }, 15000);
+}
+
+function _stopThreatMonitorPoll() {
+    if (_threatMonitorPollTimer) {
+        clearInterval(_threatMonitorPollTimer);
+        _threatMonitorPollTimer = null;
+    }
+}
+
+async function clearThreatMonitorFindings() {
+    try {
+        await fetch('/api/network/threat-monitor/clear', { method: 'POST' });
+        const panel = document.getElementById('threat-sweep-results');
+        if (panel) {
+            panel.className = 'mb-4 rounded-lg border border-slate-700 bg-slate-900/50 p-4';
+            panel.innerHTML = '<p class="text-gray-400 text-xs">Findings cleared. Monitoring continues…</p>';
+        }
+    } catch (e) {
+        console.warn('Failed to clear findings:', e);
+    }
+}
+
+// Restore toggle state on page load
+async function _restoreThreatMonitorState() {
+    try {
+        const resp = await fetch('/api/network/threat-monitor');
+        const data = await resp.json();
+        if (data.enabled) {
+            const toggle = document.getElementById('threat-monitor-toggle');
+            const knob = document.getElementById('threat-monitor-knob');
+            const warning = document.getElementById('threat-monitor-warning');
+            const statusEl = document.getElementById('threat-monitor-status');
+            const panel = document.getElementById('threat-sweep-results');
+
+            if (toggle) {
+                toggle.classList.remove('bg-slate-700');
+                toggle.classList.add('bg-red-600');
+                toggle.setAttribute('aria-checked', 'true');
+            }
+            if (knob) {
+                knob.classList.add('translate-x-4');
+                knob.classList.remove('bg-gray-400');
+                knob.classList.add('bg-white');
+            }
+            if (warning) warning.classList.remove('hidden');
+            if (statusEl) { statusEl.textContent = `Sweep #${data.sweep_count || 0}`; statusEl.classList.remove('hidden'); }
+
+            if (panel && data.findings && data.findings.length > 0) {
+                panel.classList.remove('hidden');
+                _renderThreatFindings(data, panel);
+            }
+
+            _startThreatMonitorPoll(panel);
+        }
+    } catch (e) { /* not critical */ }
+}
+document.addEventListener('DOMContentLoaded', _restoreThreatMonitorState);
 
 function formatThreatBadge(threats) {
     if (!threats || threats.length === 0) return '';
